@@ -1,0 +1,93 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "pio-build",
+			"type": "shell",
+			"command": "C:\\Users\\Rade\\.platformio\\penv\\Scripts\\platformio.exe",
+			"args": [
+				"run"
+			]
+		},
+		{
+			"label": "pio-build-temp-cal",
+			"type": "shell",
+			"command": "C:\\Users\\Rade\\.platformio\\penv\\Scripts\\platformio.exe",
+			"args": [
+				"run"
+			]
+		},
+		{
+			"label": "pio-build-snmp-ethcfg",
+			"type": "shell",
+			"command": "C:\\Users\\Rade\\.platformio\\penv\\Scripts\\platformio.exe",
+			"args": [
+				"run"
+			]
+		},
+		{
+			"label": "pio-build-eth-ui-sync",
+			"type": "shell",
+			"command": "C:\\Users\\Rade\\.platformio\\penv\\Scripts\\platformio.exe",
+			"args": [
+				"run"
+			]
+		},
+		{
+			"label": "pio-build-single-state-ui",
+			"type": "shell",
+			"command": "C:\\Users\\Rade\\.platformio\\penv\\Scripts\\platformio.exe",
+			"args": [
+				"run"
+			]
+		},
+		{
+			"label": "pio-build-html-fix",
+			"type": "shell",
+			"command": "C:\\Users\\Rade\\.platformio\\penv\\Scripts\\platformio.exe",
+			"args": [
+				"run"
+			]
+		},
+		{
+			"label": "pio-build-eth-partial-html-fix",
+			"type": "shell",
+			"command": "C:\\Users\\Rade\\.platformio\\penv\\Scripts\\platformio.exe",
+			"args": [
+				"run"
+			]
+		},
+		{
+			"label": "pio-build-ssid-update",
+			"type": "shell",
+			"command": "C:\\Users\\Rade\\.platformio\\penv\\Scripts\\platformio.exe",
+			"args": [
+				"run"
+			]
+		},
+		{
+			"label": "pio-build-fan-threshold-30",
+			"type": "shell",
+			"command": "C:\\Users\\Rade\\.platformio\\penv\\Scripts\\platformio.exe",
+			"args": [
+				"run"
+			]
+		},
+		{
+			"label": "pio-build-trap-ui",
+			"type": "shell",
+			"command": "C:\\Users\\Rade\\.platformio\\penv\\Scripts\\platformio.exe",
+			"args": [
+				"run"
+			]
+		},
+		{
+			"label": "pio-build-alarm-trap-pin34",
+			"type": "shell",
+			"command": "C:\\Users\\Rade\\.platformio\\penv\\Scripts\\platformio.exe",
+			"args": [
+				"run"
+			]
+		}
+	]
+}

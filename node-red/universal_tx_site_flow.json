@@ -1,0 +1,926 @@
+[
+  {
+    "id": "tab_tx_site_1",
+    "type": "tab",
+    "label": "TX Site - Universal",
+    "disabled": false,
+    "info": "Universal flow for one transmitter location: SNMP polling, ping health, Modbus status, InfluxDB write."
+  },
+  {
+    "id": "cmt_overview",
+    "type": "comment",
+    "z": "tab_tx_site_1",
+    "name": "Site Config",
+    "info": "Edit values in the 'Init Site Config' function: site_id, site_name, location, IPs, SNMP community, OIDs, Modbus URL.",
+    "x": 110,
+    "y": 60,
+    "wires": []
+  },
+  {
+    "id": "inj_init",
+    "type": "inject",
+    "z": "tab_tx_site_1",
+    "name": "Init on deploy",
+    "props": [
+      {
+        "p": "payload"
+      }
+    ],
+    "repeat": "",
+    "crontab": "",
+    "once": true,
+    "onceDelay": "0.5",
+    "topic": "",
+    "payload": "init",
+    "payloadType": "str",
+    "x": 110,
+    "y": 100,
+    "wires": [
+      [
+        "fn_init_config"
+      ]
+    ]
+  },
+  {
+    "id": "fn_init_config",
+    "type": "function",
+    "z": "tab_tx_site_1",
+    "name": "Init Site Config",
+    "func": "const cfg = {\n  site_id: \"tx001\",\n  site_name: \"Site Name\",\n  site_city: \"City\",\n  site_lat: 44.7866,\n  site_lon: 20.4489,\n\n  gateway_ip: \"10.13.0.1\",\n  pc_ip: \"10.13.0.10\",\n  transmitter_ip: \"10.13.0.50\",\n  modbus_ip: \"10.13.0.150\",\n\n  ping_cmd_template: \"ping -n 1 ${ip}\",\n\n  snmp: {\n    community: \"public\",\n    host: \"10.13.0.50\",\n    oids_fast: {\n      reflection: \"1.3.6.1.4.1.35305.1.1.2.6.0\",\n      deviation: \"1.3.6.1.4.1.35305.1.1.2.7.0\",\n      tx_alarm: \"1.3.6.1.4.1.35305.1.1.1.6.0\",\n      fault_alarm: \"1.3.6.1.4.1.35305.1.1.1.7.0\"\n    },\n    oids_slow: {\n      temperature: \"1.3.6.1.4.1.35305.1.1.2.12.0\",\n      power_fwd: \"1.3.6.1.4.1.35305.1.1.2.5.0\",\n      frequency: \"1.3.6.1.4.1.35305.1.1.2.3.0\"\n    }\n  },\n\n  modbus: {\n    status_hex: \"0101000000083DCC\",\n    base_url: \"http://10.13.0.150:8000/?data=\"\n  }\n};\n\nflow.set('site_cfg', cfg);\nmsg.payload = { ok: true, site_id: cfg.site_id, site_name: cfg.site_name };\nreturn msg;",
+    "outputs": 1,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 320,
+    "y": 100,
+    "wires": [
+      [
+        "dbg_init"
+      ]
+    ]
+  },
+  {
+    "id": "dbg_init",
+    "type": "debug",
+    "z": "tab_tx_site_1",
+    "name": "Init OK",
+    "active": true,
+    "tosidebar": true,
+    "console": false,
+    "tostatus": false,
+    "complete": "payload",
+    "targetType": "msg",
+    "statusVal": "",
+    "statusType": "auto",
+    "x": 500,
+    "y": 100,
+    "wires": []
+  },
+  {
+    "id": "cmt_fast_snmp",
+    "type": "comment",
+    "z": "tab_tx_site_1",
+    "name": "SNMP FAST (5s): deviation, reflection, alarm",
+    "info": "Every 5s, poll reflection/deviation/alarms and write to Influx measurement tx_telemetry_fast.",
+    "x": 220,
+    "y": 160,
+    "wires": []
+  },
+  {
+    "id": "inj_snmp_fast",
+    "type": "inject",
+    "z": "tab_tx_site_1",
+    "name": "SNMP FAST / 5s",
+    "props": [
+      {
+        "p": "payload"
+      }
+    ],
+    "repeat": "5",
+    "crontab": "",
+    "once": false,
+    "onceDelay": "",
+    "topic": "",
+    "payload": "",
+    "payloadType": "date",
+    "x": 120,
+    "y": 200,
+    "wires": [
+      [
+        "fn_build_snmp_fast_cmd"
+      ]
+    ]
+  },
+  {
+    "id": "fn_build_snmp_fast_cmd",
+    "type": "function",
+    "z": "tab_tx_site_1",
+    "name": "Build SNMP fast cmd",
+    "func": "const cfg = flow.get('site_cfg');\nif (!cfg) return null;\nconst o = cfg.snmp.oids_fast;\nconst cmd = `snmpget -v2c -c ${cfg.snmp.community} -Oqv ${cfg.snmp.host} ${o.reflection} ${o.deviation} ${o.tx_alarm} ${o.fault_alarm}`;\nmsg.command = cmd;\nreturn msg;",
+    "outputs": 1,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 330,
+    "y": 200,
+    "wires": [
+      [
+        "exec_snmp_fast"
+      ]
+    ]
+  },
+  {
+    "id": "exec_snmp_fast",
+    "type": "exec",
+    "z": "tab_tx_site_1",
+    "command": "",
+    "addpay": false,
+    "append": "",
+    "useSpawn": "false",
+    "timer": "8",
+    "winHide": false,
+    "name": "Exec SNMP fast",
+    "x": 530,
+    "y": 200,
+    "wires": [
+      [
+        "fn_parse_snmp_fast"
+      ],
+      [
+        "dbg_snmp_fast_err"
+      ],
+      []
+    ]
+  },
+  {
+    "id": "fn_parse_snmp_fast",
+    "type": "function",
+    "z": "tab_tx_site_1",
+    "name": "Parse SNMP fast -> Influx",
+    "func": "const cfg = flow.get('site_cfg');\nif (!cfg) return null;\n\nconst lines = String(msg.payload || '').trim().split(/\\r?\\n/).map(s => s.trim()).filter(Boolean);\nif (lines.length < 4) return null;\n\nconst toNum = (v) => {\n  const n = Number(String(v).replace(/[^0-9+-.]/g, ''));\n  return Number.isFinite(n) ? n : null;\n};\n\nconst reflection = toNum(lines[0]);\nconst deviation = toNum(lines[1]);\nconst tx_alarm = toNum(lines[2]);\nconst fault_alarm = toNum(lines[3]);\n\nmsg.payload = [\n  {\n    measurement: 'tx_telemetry_fast',\n    tags: {\n      site_id: cfg.site_id,\n      site_name: cfg.site_name,\n      site_city: cfg.site_city,\n      site_lat: String(cfg.site_lat),\n      site_lon: String(cfg.site_lon),\n      device: 'transmitter',\n      source: 'snmp_poll_fast'\n    },\n    fields: {\n      reflection: reflection,\n      deviation: deviation,\n      tx_alarm: tx_alarm,\n      fault_alarm: fault_alarm\n    },\n    timestamp: new Date().toISOString()\n  }\n];\nreturn msg;",
+    "outputs": 1,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 760,
+    "y": 200,
+    "wires": [
+      [
+        "influx_out"
+      ]
+    ]
+  },
+  {
+    "id": "dbg_snmp_fast_err",
+    "type": "debug",
+    "z": "tab_tx_site_1",
+    "name": "SNMP fast stderr",
+    "active": true,
+    "tosidebar": true,
+    "console": false,
+    "tostatus": false,
+    "complete": "payload",
+    "targetType": "msg",
+    "statusVal": "",
+    "statusType": "auto",
+    "x": 760,
+    "y": 240,
+    "wires": []
+  },
+  {
+    "id": "cmt_slow_snmp",
+    "type": "comment",
+    "z": "tab_tx_site_1",
+    "name": "SNMP SLOW (30s): temperature, power, frequency",
+    "info": "Every 30s, poll temperature/power/frequency and write to Influx measurement tx_telemetry_slow.",
+    "x": 240,
+    "y": 280,
+    "wires": []
+  },
+  {
+    "id": "inj_snmp_slow",
+    "type": "inject",
+    "z": "tab_tx_site_1",
+    "name": "SNMP SLOW / 30s",
+    "props": [
+      {
+        "p": "payload"
+      }
+    ],
+    "repeat": "30",
+    "crontab": "",
+    "once": false,
+    "onceDelay": "",
+    "topic": "",
+    "payload": "",
+    "payloadType": "date",
+    "x": 120,
+    "y": 320,
+    "wires": [
+      [
+        "fn_build_snmp_slow_cmd"
+      ]
+    ]
+  },
+  {
+    "id": "fn_build_snmp_slow_cmd",
+    "type": "function",
+    "z": "tab_tx_site_1",
+    "name": "Build SNMP slow cmd",
+    "func": "const cfg = flow.get('site_cfg');\nif (!cfg) return null;\nconst o = cfg.snmp.oids_slow;\nconst cmd = `snmpget -v2c -c ${cfg.snmp.community} -Oqv ${cfg.snmp.host} ${o.temperature} ${o.power_fwd} ${o.frequency}`;\nmsg.command = cmd;\nreturn msg;",
+    "outputs": 1,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 330,
+    "y": 320,
+    "wires": [
+      [
+        "exec_snmp_slow"
+      ]
+    ]
+  },
+  {
+    "id": "exec_snmp_slow",
+    "type": "exec",
+    "z": "tab_tx_site_1",
+    "command": "",
+    "addpay": false,
+    "append": "",
+    "useSpawn": "false",
+    "timer": "8",
+    "winHide": false,
+    "name": "Exec SNMP slow",
+    "x": 530,
+    "y": 320,
+    "wires": [
+      [
+        "fn_parse_snmp_slow"
+      ],
+      [
+        "dbg_snmp_slow_err"
+      ],
+      []
+    ]
+  },
+  {
+    "id": "fn_parse_snmp_slow",
+    "type": "function",
+    "z": "tab_tx_site_1",
+    "name": "Parse SNMP slow -> Influx",
+    "func": "const cfg = flow.get('site_cfg');\nif (!cfg) return null;\n\nconst lines = String(msg.payload || '').trim().split(/\\r?\\n/).map(s => s.trim()).filter(Boolean);\nif (lines.length < 3) return null;\n\nconst toNum = (v) => {\n  const n = Number(String(v).replace(/[^0-9+-.]/g, ''));\n  return Number.isFinite(n) ? n : null;\n};\n\nconst temperature = toNum(lines[0]);\nconst power_fwd = toNum(lines[1]);\nconst frequency = toNum(lines[2]);\n\nmsg.payload = [\n  {\n    measurement: 'tx_telemetry_slow',\n    tags: {\n      site_id: cfg.site_id,\n      site_name: cfg.site_name,\n      site_city: cfg.site_city,\n      site_lat: String(cfg.site_lat),\n      site_lon: String(cfg.site_lon),\n      device: 'transmitter',\n      source: 'snmp_poll_slow'\n    },\n    fields: {\n      temperature: temperature,\n      power_fwd: power_fwd,\n      frequency: frequency\n    },\n    timestamp: new Date().toISOString()\n  }\n];\nreturn msg;",
+    "outputs": 1,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 760,
+    "y": 320,
+    "wires": [
+      [
+        "influx_out"
+      ]
+    ]
+  },
+  {
+    "id": "dbg_snmp_slow_err",
+    "type": "debug",
+    "z": "tab_tx_site_1",
+    "name": "SNMP slow stderr",
+    "active": true,
+    "tosidebar": true,
+    "console": false,
+    "tostatus": false,
+    "complete": "payload",
+    "targetType": "msg",
+    "statusVal": "",
+    "statusType": "auto",
+    "x": 760,
+    "y": 360,
+    "wires": []
+  },
+  {
+    "id": "cmt_ping",
+    "type": "comment",
+    "z": "tab_tx_site_1",
+    "name": "Ping health (5s): gateway, pc, transmitter, modbus",
+    "info": "Every 5s, ping all critical hosts and write reachability + RTT to Influx.",
+    "x": 230,
+    "y": 400,
+    "wires": []
+  },
+  {
+    "id": "inj_ping_5s",
+    "type": "inject",
+    "z": "tab_tx_site_1",
+    "name": "Ping all / 5s",
+    "props": [
+      {
+        "p": "payload"
+      }
+    ],
+    "repeat": "5",
+    "crontab": "",
+    "once": false,
+    "onceDelay": "",
+    "topic": "",
+    "payload": "",
+    "payloadType": "date",
+    "x": 120,
+    "y": 440,
+    "wires": [
+      [
+        "fn_expand_ping_targets"
+      ]
+    ]
+  },
+  {
+    "id": "fn_expand_ping_targets",
+    "type": "function",
+    "z": "tab_tx_site_1",
+    "name": "Build ping targets",
+    "func": "const cfg = flow.get('site_cfg');\nif (!cfg) return null;\n\nconst targets = [\n  { name: 'gateway', ip: cfg.gateway_ip },\n  { name: 'pc', ip: cfg.pc_ip },\n  { name: 'transmitter', ip: cfg.transmitter_ip },\n  { name: 'modbus', ip: cfg.modbus_ip }\n];\n\nconst out = [];\nfor (const t of targets) {\n  const cmd = cfg.ping_cmd_template.replace('${ip}', t.ip);\n  out.push({ payload: cmd, target: t.name, ip: t.ip });\n}\nreturn [out];",
+    "outputs": 1,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 330,
+    "y": 440,
+    "wires": [
+      [
+        "exec_ping"
+      ]
+    ]
+  },
+  {
+    "id": "exec_ping",
+    "type": "exec",
+    "z": "tab_tx_site_1",
+    "command": "",
+    "addpay": "payload",
+    "append": "",
+    "useSpawn": "false",
+    "timer": "6",
+    "winHide": false,
+    "name": "Exec ping",
+    "x": 510,
+    "y": 440,
+    "wires": [
+      [
+        "fn_parse_ping_to_influx"
+      ],
+      [
+        "dbg_ping_err"
+      ],
+      []
+    ]
+  },
+  {
+    "id": "fn_parse_ping_to_influx",
+    "type": "function",
+    "z": "tab_tx_site_1",
+    "name": "Parse ping -> Influx",
+    "func": "const cfg = flow.get('site_cfg');\nif (!cfg) return null;\n\nconst raw = String(msg.payload || '');\nconst target = msg.target || 'unknown';\nconst ip = msg.ip || '';\n\nconst hasReply = /TTL=|ttl=|Reply from|bytes from/i.test(raw);\nlet rtt = null;\n\nlet m = raw.match(/Average = (\\d+)ms/i);\nif (m) rtt = Number(m[1]);\nif (rtt === null) {\n  m = raw.match(/time[=<]\\s*(\\d+(?:\\.\\d+)?)\\s*ms/i);\n  if (m) rtt = Number(m[1]);\n}\n\nmsg.payload = [\n  {\n    measurement: 'site_ping_health',\n    tags: {\n      site_id: cfg.site_id,\n      site_name: cfg.site_name,\n      site_city: cfg.site_city,\n      site_lat: String(cfg.site_lat),\n      site_lon: String(cfg.site_lon),\n      device: target,\n      source: 'ping'\n    },\n    fields: {\n      up: hasReply ? 1 : 0,\n      rtt_ms: rtt === null ? -1 : rtt,\n      target_ip: ip\n    },\n    timestamp: new Date().toISOString()\n  }\n];\nreturn msg;",
+    "outputs": 1,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 730,
+    "y": 440,
+    "wires": [
+      [
+        "influx_out"
+      ]
+    ]
+  },
+  {
+    "id": "dbg_ping_err",
+    "type": "debug",
+    "z": "tab_tx_site_1",
+    "name": "Ping stderr",
+    "active": false,
+    "tosidebar": true,
+    "console": false,
+    "tostatus": false,
+    "complete": "payload",
+    "targetType": "msg",
+    "statusVal": "",
+    "statusType": "auto",
+    "x": 700,
+    "y": 480,
+    "wires": []
+  },
+  {
+    "id": "cmt_modbus",
+    "type": "comment",
+    "z": "tab_tx_site_1",
+    "name": "Modbus relay status (5s) via HTTP bridge",
+    "info": "Uses /?data=<HEX> endpoint and parses 8 relay bits from response byte #4 (index 3).",
+    "x": 230,
+    "y": 520,
+    "wires": []
+  },
+  {
+    "id": "inj_modbus_status",
+    "type": "inject",
+    "z": "tab_tx_site_1",
+    "name": "Modbus status / 5s",
+    "props": [
+      {
+        "p": "payload"
+      }
+    ],
+    "repeat": "5",
+    "crontab": "",
+    "once": false,
+    "onceDelay": "",
+    "topic": "",
+    "payload": "",
+    "payloadType": "date",
+    "x": 120,
+    "y": 560,
+    "wires": [
+      [
+        "fn_build_modbus_url"
+      ]
+    ]
+  },
+  {
+    "id": "fn_build_modbus_url",
+    "type": "function",
+    "z": "tab_tx_site_1",
+    "name": "Build Modbus status URL",
+    "func": "const cfg = flow.get('site_cfg');\nif (!cfg) return null;\nmsg.method = 'GET';\nmsg.url = cfg.modbus.base_url + cfg.modbus.status_hex;\nmsg._modbusReadTs = Date.now();\nreturn msg;",
+    "outputs": 1,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 340,
+    "y": 560,
+    "wires": [
+      [
+        "http_modbus"
+      ]
+    ]
+  },
+  {
+    "id": "http_modbus",
+    "type": "http request",
+    "z": "tab_tx_site_1",
+    "name": "HTTP Modbus read",
+    "method": "use",
+    "ret": "bin",
+    "paytoqs": "ignore",
+    "url": "",
+    "tls": "",
+    "persist": false,
+    "proxy": "",
+    "insecureHTTPParser": false,
+    "authType": "",
+    "senderr": false,
+    "headers": [],
+    "x": 540,
+    "y": 560,
+    "wires": [
+      [
+        "fn_parse_modbus_status"
+      ]
+    ]
+  },
+  {
+    "id": "fn_parse_modbus_status",
+    "type": "function",
+    "z": "tab_tx_site_1",
+    "name": "Parse Modbus bits -> Influx",
+    "func": "const cfg = flow.get('site_cfg');\nif (!cfg) return null;\n\nconst b = msg.payload;\nif (!Buffer.isBuffer(b) || b.length < 4) return null;\n\nconst statusByte = b[3];\nconst fields = {};\nfor (let i = 0; i < 8; i++) {\n  fields[`relay_${i+1}`] = (statusByte & (1 << i)) ? 1 : 0;\n}\nfields.reachable = 1;\nfields.rtt_ms = Date.now() - (msg._modbusReadTs || Date.now());\n\nmsg.payload = [\n  {\n    measurement: 'relay_status',\n    tags: {\n      site_id: cfg.site_id,\n      site_name: cfg.site_name,\n      site_city: cfg.site_city,\n      site_lat: String(cfg.site_lat),\n      site_lon: String(cfg.site_lon),\n      device: 'waveshare_relay',\n      source: 'modbus_poll'\n    },\n    fields: fields,\n    timestamp: new Date().toISOString()\n  }\n];\nreturn msg;",
+    "outputs": 1,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 760,
+    "y": 560,
+    "wires": [
+      [
+        "influx_out"
+      ]
+    ]
+  },
+  {
+    "id": "cmt_relay_cmd",
+    "type": "comment",
+    "z": "tab_tx_site_1",
+    "name": "Relay command/ack: queue, verify, retry, Influx",
+    "info": "POST /tx/relay/set with JSON {channel:1..8,state:0|1,source}. Includes test inject node.",
+    "x": 230,
+    "y": 620,
+    "wires": []
+  },
+  {
+    "id": "inj_test_relay_on",
+    "type": "inject",
+    "z": "tab_tx_site_1",
+    "name": "TEST relay ch1 ON",
+    "props": [
+      {
+        "p": "payload"
+      }
+    ],
+    "repeat": "",
+    "crontab": "",
+    "once": false,
+    "onceDelay": "",
+    "topic": "",
+    "payload": "{\"channel\":1,\"state\":1,\"source\":\"manual_test\"}",
+    "payloadType": "json",
+    "x": 120,
+    "y": 660,
+    "wires": [
+      [
+        "fn_cmd_normalize"
+      ]
+    ]
+  },
+  {
+    "id": "http_in_relay_set",
+    "type": "http in",
+    "z": "tab_tx_site_1",
+    "name": "API relay set",
+    "url": "/tx/relay/set",
+    "method": "post",
+    "upload": false,
+    "swaggerDoc": "",
+    "x": 110,
+    "y": 700,
+    "wires": [
+      [
+        "json_relay_set"
+      ]
+    ]
+  },
+  {
+    "id": "json_relay_set",
+    "type": "json",
+    "z": "tab_tx_site_1",
+    "name": "Parse JSON body",
+    "property": "payload",
+    "action": "obj",
+    "pretty": false,
+    "x": 300,
+    "y": 700,
+    "wires": [
+      [
+        "fn_cmd_normalize"
+      ]
+    ]
+  },
+  {
+    "id": "fn_cmd_normalize",
+    "type": "function",
+    "z": "tab_tx_site_1",
+    "name": "Normalize relay command",
+    "func": "const cfg = flow.get('site_cfg');\nif (!cfg) return null;\n\nconst p = msg.payload || {};\nconst channel = Number(p.channel);\nconst state = Number(p.state);\nif (!Number.isInteger(channel) || channel < 1 || channel > 8) {\n  if (msg.res) {\n    msg.statusCode = 400;\n    msg.payload = { ok: false, error: 'channel must be 1..8' };\n    return [null, msg, null];\n  }\n  return null;\n}\nif (!(state === 0 || state === 1)) {\n  if (msg.res) {\n    msg.statusCode = 400;\n    msg.payload = { ok: false, error: 'state must be 0 or 1' };\n    return [null, msg, null];\n  }\n  return null;\n}\n\nconst command_id = `${cfg.site_id}-${Date.now()}-${Math.floor(Math.random() * 100000)}`;\nmsg._relayCmd = {\n  command_id,\n  channel,\n  target_state: state,\n  source: p.source || 'api',\n  retry_count: Number(p.retry_count || 0),\n  ts_send_iso: new Date().toISOString()\n};\n\nconst queueMsg = RED.util.cloneMessage(msg);\nconst ackMsg = msg.res ? RED.util.cloneMessage(msg) : null;\nconst logMsg = RED.util.cloneMessage(msg);\n\nif (ackMsg) {\n  ackMsg.statusCode = 202;\n  ackMsg.payload = {\n    ok: true,\n    accepted: true,\n    command_id: msg._relayCmd.command_id,\n    channel: msg._relayCmd.channel,\n    target_state: msg._relayCmd.target_state\n  };\n}\n\nlogMsg.payload = [{\n  measurement: 'relay_command',\n  tags: {\n    site_id: cfg.site_id,\n    site_name: cfg.site_name,\n    site_city: cfg.site_city,\n    site_lat: String(cfg.site_lat),\n    site_lon: String(cfg.site_lon),\n    device: 'waveshare_relay',\n    source: msg._relayCmd.source\n  },\n  fields: {\n    command_id: msg._relayCmd.command_id,\n    channel: msg._relayCmd.channel,\n    target_state: msg._relayCmd.target_state,\n    retry_count: msg._relayCmd.retry_count\n  },\n  timestamp: msg._relayCmd.ts_send_iso\n}];\n\nreturn [queueMsg, ackMsg, logMsg];",
+    "outputs": 3,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 520,
+    "y": 680,
+    "wires": [
+      [
+        "delay_relay_queue"
+      ],
+      [
+        "http_out_relay_set"
+      ],
+      [
+        "influx_out"
+      ]
+    ]
+  },
+  {
+    "id": "http_out_relay_set",
+    "type": "http response",
+    "z": "tab_tx_site_1",
+    "name": "API response",
+    "statusCode": "",
+    "headers": {},
+    "x": 730,
+    "y": 720,
+    "wires": []
+  },
+  {
+    "id": "delay_relay_queue",
+    "type": "delay",
+    "z": "tab_tx_site_1",
+    "name": "Queue relay commands",
+    "pauseType": "rate",
+    "timeout": "5",
+    "timeoutUnits": "seconds",
+    "rate": "1",
+    "nbRateUnits": "1",
+    "rateUnits": "second",
+    "randomFirst": "1",
+    "randomLast": "5",
+    "randomUnits": "seconds",
+    "drop": false,
+    "allowrate": false,
+    "outputs": 1,
+    "x": 780,
+    "y": 660,
+    "wires": [
+      [
+        "fn_build_relay_cmd_hex"
+      ]
+    ]
+  },
+  {
+    "id": "fn_build_relay_cmd_hex",
+    "type": "function",
+    "z": "tab_tx_site_1",
+    "name": "Build relay command HEX",
+    "func": "const cfg = flow.get('site_cfg');\nif (!cfg || !msg._relayCmd) return null;\n\nconst cmdOn = [\n  '01050000FF008C3A',\n  '010500015500A35A',\n  '010500025500535A',\n  '010500035500029A',\n  '010500045500B35B',\n  '010500055500E29B',\n  '010500065500129B',\n  '010500075500435B'\n];\nconst cmdOff = [\n  '010500000000CDCA',\n  '010500015500A35A',\n  '010500025500535A',\n  '010500035500029A',\n  '010500045500B35B',\n  '010500055500E29B',\n  '010500065500129B',\n  '010500075500435B'\n];\n\nconst idx = msg._relayCmd.channel - 1;\nconst hex = msg._relayCmd.target_state === 1 ? cmdOn[idx] : cmdOff[idx];\nif (!hex) return null;\n\nmsg.method = 'GET';\nmsg.url = cfg.modbus.base_url + hex;\nmsg._relayCmd.command_hex = hex;\nmsg._relayCmd.exec_ts_ms = Date.now();\nreturn msg;",
+    "outputs": 1,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 1020,
+    "y": 660,
+    "wires": [
+      [
+        "http_modbus_cmd"
+      ]
+    ]
+  },
+  {
+    "id": "http_modbus_cmd",
+    "type": "http request",
+    "z": "tab_tx_site_1",
+    "name": "HTTP Modbus command",
+    "method": "use",
+    "ret": "bin",
+    "paytoqs": "ignore",
+    "url": "",
+    "tls": "",
+    "persist": false,
+    "proxy": "",
+    "insecureHTTPParser": false,
+    "authType": "",
+    "senderr": false,
+    "headers": [],
+    "x": 1240,
+    "y": 660,
+    "wires": [
+      [
+        "fn_prepare_verify"
+      ]
+    ]
+  },
+  {
+    "id": "fn_prepare_verify",
+    "type": "function",
+    "z": "tab_tx_site_1",
+    "name": "Prepare verify",
+    "func": "if (!msg._relayCmd) return null;\nmsg._relayCmd.command_rtt_ms = Date.now() - (msg._relayCmd.exec_ts_ms || Date.now());\nmsg._relayCmd.cmd_resp_hex = Buffer.isBuffer(msg.payload) ? msg.payload.toString('hex').toUpperCase() : String(msg.payload || '');\nmsg.delay = 700;\nreturn msg;",
+    "outputs": 1,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 1450,
+    "y": 660,
+    "wires": [
+      [
+        "delay_verify_status"
+      ]
+    ]
+  },
+  {
+    "id": "delay_verify_status",
+    "type": "delay",
+    "z": "tab_tx_site_1",
+    "name": "Wait before verify",
+    "pauseType": "delayv",
+    "timeout": "5",
+    "timeoutUnits": "seconds",
+    "rate": "1",
+    "nbRateUnits": "1",
+    "rateUnits": "second",
+    "randomFirst": "1",
+    "randomLast": "5",
+    "randomUnits": "seconds",
+    "drop": false,
+    "allowrate": false,
+    "outputs": 1,
+    "x": 1670,
+    "y": 660,
+    "wires": [
+      [
+        "fn_build_verify_url"
+      ]
+    ]
+  },
+  {
+    "id": "fn_build_verify_url",
+    "type": "function",
+    "z": "tab_tx_site_1",
+    "name": "Build verify status URL",
+    "func": "const cfg = flow.get('site_cfg');\nif (!cfg || !msg._relayCmd) return null;\nmsg.method = 'GET';\nmsg.url = cfg.modbus.base_url + cfg.modbus.status_hex;\nmsg._relayCmd.verify_ts_ms = Date.now();\nreturn msg;",
+    "outputs": 1,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 1900,
+    "y": 660,
+    "wires": [
+      [
+        "http_modbus_verify"
+      ]
+    ]
+  },
+  {
+    "id": "http_modbus_verify",
+    "type": "http request",
+    "z": "tab_tx_site_1",
+    "name": "HTTP Modbus verify",
+    "method": "use",
+    "ret": "bin",
+    "paytoqs": "ignore",
+    "url": "",
+    "tls": "",
+    "persist": false,
+    "proxy": "",
+    "insecureHTTPParser": false,
+    "authType": "",
+    "senderr": false,
+    "headers": [],
+    "x": 2120,
+    "y": 660,
+    "wires": [
+      [
+        "fn_eval_verify"
+      ]
+    ]
+  },
+  {
+    "id": "fn_eval_verify",
+    "type": "function",
+    "z": "tab_tx_site_1",
+    "name": "Evaluate ACK",
+    "func": "if (!msg._relayCmd) return null;\n\nconst b = msg.payload;\nif (!Buffer.isBuffer(b) || b.length < 4) {\n  msg._relayCmd.verify_error = 'Invalid status response';\n  return [null, msg];\n}\n\nconst statusByte = b[3];\nconst bit = msg._relayCmd.channel - 1;\nconst actual = (statusByte & (1 << bit)) ? 1 : 0;\nmsg._relayCmd.actual_state = actual;\nmsg._relayCmd.verify_rtt_ms = Date.now() - (msg._relayCmd.verify_ts_ms || Date.now());\nmsg._relayCmd.ack_ok = actual === msg._relayCmd.target_state;\n\nif (msg._relayCmd.ack_ok) return [msg, null];\nreturn [null, msg];",
+    "outputs": 2,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 2330,
+    "y": 660,
+    "wires": [
+      [
+        "fn_build_ack_success_point",
+        "dbg_ack_ok"
+      ],
+      [
+        "fn_retry_or_fail"
+      ]
+    ]
+  },
+  {
+    "id": "fn_retry_or_fail",
+    "type": "function",
+    "z": "tab_tx_site_1",
+    "name": "Retry or fail",
+    "func": "if (!msg._relayCmd) return null;\nconst maxRetries = 2;\nconst cur = Number(msg._relayCmd.retry_count || 0);\nif (cur < maxRetries) {\n  msg._relayCmd.retry_count = cur + 1;\n  return [msg, null];\n}\nreturn [null, msg];",
+    "outputs": 2,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 2520,
+    "y": 700,
+    "wires": [
+      [
+        "delay_relay_queue"
+      ],
+      [
+        "fn_build_ack_fail_point",
+        "dbg_ack_fail"
+      ]
+    ]
+  },
+  {
+    "id": "fn_build_ack_success_point",
+    "type": "function",
+    "z": "tab_tx_site_1",
+    "name": "ACK success -> Influx",
+    "func": "const cfg = flow.get('site_cfg');\nif (!cfg || !msg._relayCmd) return null;\n\nmsg.payload = [{\n  measurement: 'relay_ack',\n  tags: {\n    site_id: cfg.site_id,\n    site_name: cfg.site_name,\n    site_city: cfg.site_city,\n    site_lat: String(cfg.site_lat),\n    site_lon: String(cfg.site_lon),\n    device: 'waveshare_relay',\n    source: msg._relayCmd.source\n  },\n  fields: {\n    command_id: msg._relayCmd.command_id,\n    channel: msg._relayCmd.channel,\n    target_state: msg._relayCmd.target_state,\n    actual_state: msg._relayCmd.actual_state,\n    ack_ok: 1,\n    retry_count: msg._relayCmd.retry_count || 0,\n    command_rtt_ms: msg._relayCmd.command_rtt_ms || -1,\n    verify_rtt_ms: msg._relayCmd.verify_rtt_ms || -1\n  },\n  timestamp: new Date().toISOString()\n}];\nreturn msg;",
+    "outputs": 1,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 2550,
+    "y": 640,
+    "wires": [
+      [
+        "influx_out"
+      ]
+    ]
+  },
+  {
+    "id": "fn_build_ack_fail_point",
+    "type": "function",
+    "z": "tab_tx_site_1",
+    "name": "ACK fail -> Influx",
+    "func": "const cfg = flow.get('site_cfg');\nif (!cfg || !msg._relayCmd) return null;\n\nmsg.payload = [{\n  measurement: 'relay_ack',\n  tags: {\n    site_id: cfg.site_id,\n    site_name: cfg.site_name,\n    site_city: cfg.site_city,\n    site_lat: String(cfg.site_lat),\n    site_lon: String(cfg.site_lon),\n    device: 'waveshare_relay',\n    source: msg._relayCmd.source\n  },\n  fields: {\n    command_id: msg._relayCmd.command_id,\n    channel: msg._relayCmd.channel,\n    target_state: msg._relayCmd.target_state,\n    actual_state: (msg._relayCmd.actual_state ?? -1),\n    ack_ok: 0,\n    retry_count: msg._relayCmd.retry_count || 0,\n    command_rtt_ms: msg._relayCmd.command_rtt_ms || -1,\n    verify_rtt_ms: msg._relayCmd.verify_rtt_ms || -1,\n    error: msg._relayCmd.verify_error || 'Verify mismatch'\n  },\n  timestamp: new Date().toISOString()\n}];\nreturn msg;",
+    "outputs": 1,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 2750,
+    "y": 760,
+    "wires": [
+      [
+        "influx_out"
+      ]
+    ]
+  },
+  {
+    "id": "dbg_ack_ok",
+    "type": "debug",
+    "z": "tab_tx_site_1",
+    "name": "Relay ACK OK",
+    "active": true,
+    "tosidebar": true,
+    "console": false,
+    "tostatus": false,
+    "complete": "_relayCmd",
+    "targetType": "msg",
+    "statusVal": "",
+    "statusType": "auto",
+    "x": 2740,
+    "y": 620,
+    "wires": []
+  },
+  {
+    "id": "dbg_ack_fail",
+    "type": "debug",
+    "z": "tab_tx_site_1",
+    "name": "Relay ACK FAIL",
+    "active": true,
+    "tosidebar": true,
+    "console": false,
+    "tostatus": false,
+    "complete": "_relayCmd",
+    "targetType": "msg",
+    "statusVal": "",
+    "statusType": "auto",
+    "x": 2740,
+    "y": 700,
+    "wires": []
+  },
+  {
+    "id": "influx_out",
+    "type": "influxdb out",
+    "z": "tab_tx_site_1",
+    "influxdb": "cfg_influx",
+    "name": "InfluxDB write",
+    "measurement": "",
+    "precision": "ms",
+    "retentionPolicy": "",
+    "database": "",
+    "precisionV18FluxV20": "ms",
+    "retentionPolicyV18Flux": "",
+    "org": "",
+    "bucket": "tx_sites_prod",
+    "x": 980,
+    "y": 360,
+    "wires": []
+  },
+  {
+    "id": "cfg_influx",
+    "type": "influxdb",
+    "hostname": "127.0.0.1",
+    "port": "8086",
+    "protocol": "http",
+    "database": "",
+    "name": "InfluxDB",
+    "usetls": false,
+    "tls": "",
+    "influxdbVersion": "2.0",
+    "url": "http://127.0.0.1:8086",
+    "timeout": "10",
+    "rejectUnauthorized": true
+  }
+]

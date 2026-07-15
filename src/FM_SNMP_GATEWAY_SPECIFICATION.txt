@@ -1,0 +1,533 @@
+============================================================
+UNIVERZALNI FM SNMP TELEMETRIJSKI MODUL
+TEHNIČKA SPECIFIKACIJA PROJEKTA
+============================================================
+
+Verzija dokumenta: 1.0
+
+============================================================
+1. CILJ PROJEKTA
+============================================================
+
+Cilj projekta je razvoj univerzalnog telemetrijskog i kontrolnog
+modula za stare i nove FM predajnike.
+
+Uređaj treba da omogući povezivanje FM predajnika koji imaju
+analogne telemetrijske izlaze sa postojećim sistemom nadzora
+baziranim na SNMP protokolu.
+
+Glavni cilj je da se različiti modeli FM predajnika predstave
+nadzornom sistemu kao standardni SNMP uređaji.
+
+Uređaj treba da omogućava:
+
+- merenje analognih parametara predajnika
+- slanje SNMP GET odgovora
+- slanje SNMP Trap alarma
+- lokalni web prikaz parametara
+- mrežnu konfiguraciju
+- OTA ažuriranje firmware-a
+- dugotrajan stabilan rad bez intervencije
+
+
+============================================================
+2. CILJNA PRIMENA
+============================================================
+
+Primarna namena:
+
+- FM radio predajnici
+- profesionalna broadcast oprema
+- udaljene lokacije bez lokalnog pristupa
+
+Primeri merenih parametara:
+
+- RF Forward snaga
+- RF Reflect snaga
+- Temperatura
+- Devijacija
+- Alarm status
+- Digitalni statusi predajnika
+
+
+============================================================
+3. HARDVERSKA PLATFORME
+============================================================
+
+Glavni mikrokontroler:
+
+ESP32-WROOM-32UE
+
+
+Karakteristike:
+
+- Dual core CPU
+- 240 MHz
+- WiFi
+- Bluetooth nije primaran
+- dovoljno GPIO pinova
+- FreeRTOS podrška
+
+
+============================================================
+4. MREŽNA KOMUNIKACIJA
+============================================================
+
+Primarni mrežni interfejs:
+
+W5500 Ethernet kontroler
+
+
+Sekundarni mrežni interfejs:
+
+ESP32 ugrađeni WiFi
+
+
+Prioritet:
+
+1. Ethernet
+2. WiFi kao rezervni kanal
+
+
+Funkcije:
+
+- DHCP
+- statička IP adresa
+- gateway
+- DNS
+- NTP
+- OTA update
+
+
+============================================================
+5. ANALOGNA MERENJA
+============================================================
+
+Za analogna merenja koristi se:
+
+ADS1115
+
+
+Karakteristike:
+
+- 16-bit ADC
+- I2C komunikacija
+- 4 analogna kanala
+
+
+Predviđena raspodela:
+
+
+AIN0:
+
+RF Forward
+
+
+AIN1:
+
+RF Reflect
+
+
+AIN2:
+
+Temperatura
+
+
+AIN3:
+
+Devijacija
+
+
+Napomena:
+
+Ulazi mogu biti analogni izlazi iz FM predajnika.
+Tipičan opseg signala:
+
+0-5V
+
+
+Potrebno je zaštititi ADS1115 od napona većeg od dozvoljenog.
+
+
+============================================================
+6. DIGITALNI ULAZI
+============================================================
+
+Predviđeni digitalni ulazi:
+
+
+Alarm input:
+
+- hardverski alarm predajnika
+- generisanje SNMP Trap poruke
+
+
+ON/OFF status input:
+
+- trenutno nije definisana tačna namena
+- ostaviti mogućnost konfiguracije
+
+
+Ulazi moraju imati:
+
+- debounce
+- zaštitu od smetnji
+- definisano aktivno stanje
+
+
+============================================================
+7. DIGITALNI IZLAZI
+============================================================
+
+Predvideti nekoliko digitalnih izlaza.
+
+Trenutna namena nije definisana.
+
+Moguće buduće funkcije:
+
+- reset predajnika
+- remote ON/OFF
+- upravljanje relejem
+- ventilator
+- signalizacija
+
+
+Izlazi treba da budu implementirani modularno.
+
+
+============================================================
+8. KALIBRACIJA ANALOGNIH MERENJA
+============================================================
+
+Sva analogna merenja moraju imati kalibraciju.
+
+Ne koristiti samo jednostavan linearni faktor.
+
+
+Razlog:
+
+RF Forward i Reflect merenja mogu imati nelinearnu
+karakteristiku zbog RF detektora.
+
+
+Podržati:
+
+1. Linearna kalibracija
+
+Y = K * X + Offset
+
+
+2. Kvadratna kalibracija
+
+Y = A*X² + B*X + C
+
+
+3. Kalibraciona tabela (LUT)
+
+Preporučena metoda.
+
+
+Primer:
+
+ADC vrednost    Realna vrednost
+
+1800            0 W
+2200            25 W
+2600            100 W
+3200            300 W
+3500            500 W
+
+
+Između tačaka koristiti interpolaciju.
+
+
+Kalibracioni podaci se čuvaju u Flash memoriji.
+
+
+============================================================
+9. FILTRIRANJE MERENJA
+============================================================
+
+Analogna merenja moraju biti filtrirana.
+
+
+Predlog:
+
+- period očitavanja 20-100 ms
+- pokretni prosek
+- digitalni low-pass filter
+
+
+Cilj:
+
+Stabilan prikaz u web interfejsu i SNMP sistemu.
+
+
+============================================================
+10. SNMP FUNKCIJE
+============================================================
+
+Uređaj mora implementirati SNMP Agent.
+
+
+Podržati:
+
+
+SNMP GET:
+
+- Forward power
+- Reflect power
+- Temperature
+- Deviation
+- Alarm state
+- Network status
+- Uptime
+
+
+SNMP SET:
+
+Minimalna podrška:
+
+- reset alarma
+- kontrolne funkcije ako se kasnije uvedu
+
+
+============================================================
+11. SNMP TRAP ALARMI
+============================================================
+
+Kod promene alarmnog stanja uređaj šalje SNMP Trap.
+
+
+Primer:
+
+
+Alarm aktiviran:
+
+DEVICE_ALARM_ON
+
+
+Alarm vraćen:
+
+DEVICE_ALARM_OFF
+
+
+Trap treba sadržati:
+
+- naziv uređaja
+- IP adresu
+- vreme događaja
+- tip alarma
+- trenutne vrednosti merenja
+
+
+============================================================
+12. WEB INTERFEJS
+============================================================
+
+Uređaj treba da ima lokalni web server.
+
+
+Funkcije:
+
+
+Status stranica:
+
+- Forward
+- Reflect
+- Temperature
+- Deviation
+- Alarm status
+- Network status
+
+
+Podešavanja:
+
+- IP konfiguracija
+- SNMP community
+- SNMP trap server
+- kalibracioni parametri
+
+
+Osvežavanje:
+
+Koristiti WebSocket.
+
+
+Ne koristiti stalni refresh stranice.
+
+
+============================================================
+13. VREME I RTC
+============================================================
+
+Koristiti NTP sinhronizaciju vremena.
+
+
+RTC nije obavezan u prvoj verziji.
+
+
+Ostaviti mogućnost dodavanja eksternog RTC modula.
+
+
+============================================================
+14. OTA UPDATE
+============================================================
+
+Firmware mora podržavati OTA update.
+
+
+Cilj:
+
+Promena firmware-a bez fizičkog pristupa uređaju.
+
+
+============================================================
+15. ARHITEKTURA SOFTVERA
+============================================================
+
+Kod mora biti modularan.
+
+
+Predviđeni moduli:
+
+
+NetworkManager
+
+- Ethernet
+- WiFi
+- NTP
+
+
+AnalogManager
+
+- ADS1115
+- merenja
+- filtriranje
+- kalibracija
+
+
+SNMPManager
+
+- GET
+- SET
+- Trap
+
+
+WebManager
+
+- HTTP server
+- WebSocket
+
+
+AlarmManager
+
+- digitalni ulazi
+- alarm logika
+- događaji
+
+
+ConfigManager
+
+- Flash
+- Preferences
+- konfiguracija
+
+
+OTA Manager
+
+- firmware update
+
+
+============================================================
+16. ORGANIZACIJA KODA
+============================================================
+
+Koristiti C++.
+
+
+Platforma:
+
+PlatformIO
+
+
+Struktura:
+
+
+src/
+
+    main.cpp
+
+    AnalogManager.cpp
+    AnalogManager.h
+
+    SNMPManager.cpp
+    SNMPManager.h
+
+    NetworkManager.cpp
+    NetworkManager.h
+
+    WebManager.cpp
+    WebManager.h
+
+    AlarmManager.cpp
+    AlarmManager.h
+
+    ConfigManager.cpp
+    ConfigManager.h
+
+
+Ne koristiti nepotrebne globalne promenljive.
+
+
+Koristiti klase.
+
+
+============================================================
+17. ZAHTEVI ZA STABILNOST
+============================================================
+
+Uređaj je namenjen za rad 24/7.
+
+
+Obavezno:
+
+- watchdog
+- automatski reconnect Ethernet/WiFi
+- zaštita od blokiranja
+- log događaja
+- čuvanje konfiguracije
+
+
+============================================================
+18. BUDUĆA PROŠIRENJA
+============================================================
+
+Moguća proširenja:
+
+- RS485 komunikacija sa predajnikom
+- Modbus podrška
+- direktno čitanje fabričkog protokola
+- dodatni ADC kanali
+- audio DSP merenje devijacije
+- MPX analiza
+
+
+RS485 nije deo prve verzije.
+
+
+============================================================
+19. PRINCIP RAZVOJA
+============================================================
+
+Prva verzija mora biti univerzalni analogni SNMP gateway.
+
+Ne vezivati firmware za jedan model predajnika.
+
+
+Mizzar 500W predajnik koristi se samo kao prvi testni uređaj.
+
+
+============================================================
+KRAJ SPECIFIKACIJE
+============================================================
