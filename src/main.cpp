@@ -1,4 +1,5 @@
 #include <Arduino.h>
+#include <cmath>
 #include <esp_task_wdt.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
@@ -18,6 +19,13 @@ namespace {
 constexpr uint32_t kWdtTimeoutSec = 10;
 constexpr uint16_t MEASUREMENT_PERIOD_MS = 50;
 constexpr uint16_t COMMUNICATION_PERIOD_MS = 50;
+
+uint16_t sanitizeCpuFreq(uint16_t mhz) {
+  if (mhz == 80 || mhz == 160 || mhz == 240) {
+    return mhz;
+  }
+  return 240;
+}
 
 ConfigManager configManager;
 AnalogManager analogManager;
@@ -44,6 +52,10 @@ void measurementTask(void* parameter) {
     const uint32_t nowMs = millis();
     analogManager.update(nowMs);
     const AnalogValues analog = analogManager.getValues();
+    float coreTempC = temperatureRead();
+    if (!std::isfinite(coreTempC)) {
+      coreTempC = 0.0f;
+    }
     fanManager.update(nowMs, analog.temperature);
     alarmManager.update(nowMs);
 
@@ -55,6 +67,9 @@ void measurementTask(void* parameter) {
     gTelemetry.fanRpm = fanManager.getRpm();
     gTelemetry.fanDutyPercent = fanManager.getDutyPercent();
     gTelemetry.fanHealthStatus = fanManager.getHealthStatusCode();
+    gTelemetry.espCoreTempC = coreTempC;
+    gTelemetry.cpuFreqMhz = static_cast<uint16_t>(getCpuFrequencyMhz());
+    gTelemetry.freeHeapBytes = ESP.getFreeHeap();
     gTelemetry.uptimeSec = nowMs / 1000;
     if (alarm.alarmChanged) {
       gAlarmEdgePending = true;
@@ -122,6 +137,10 @@ void setup() {
 
   configManager.begin();
   const DeviceConfig& cfg = configManager.getConfig();
+
+  const uint16_t cpuFreqMhz = sanitizeCpuFreq(cfg.cpuFreqMhz);
+  setCpuFrequencyMhz(cpuFreqMhz);
+  Serial.printf("CPU clock set to %u MHz\n", static_cast<unsigned>(getCpuFrequencyMhz()));
 
   esp_task_wdt_init(kWdtTimeoutSec, true);
 

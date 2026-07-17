@@ -23,6 +23,9 @@ struct SnmpTelemetry {
   uint16_t fanRpm = 0;
   uint8_t fanDutyPercent = 0;
   uint8_t fanHealthStatus = 0;
+  float espCoreTempC = 0.0f;
+  uint16_t cpuFreqMhz = 0;
+  uint32_t freeHeapBytes = 0;
   uint32_t uptimeSec = 0;
 };
 

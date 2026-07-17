@@ -22,8 +22,9 @@ class AnalogManager {
 
  private:
     int16_t readAdcChannel(uint8_t channel);
-  float applyCalibration(const CalibrationProfile& profile, int16_t adc) const;
-  float applyLutInterpolation(const CalibrationProfile& profile, int16_t adc) const;
+      float adcToInputVoltage(int16_t adc) const;
+      float applyCalibration(const CalibrationProfile& profile, float inputVoltage) const;
+      float applyLutInterpolation(const CalibrationProfile& profile, float inputVoltage) const;
 
   const DeviceConfig* cfg_ = nullptr;
     Adafruit_ADS1115 ads_;

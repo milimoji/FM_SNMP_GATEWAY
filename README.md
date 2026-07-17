@@ -137,6 +137,7 @@ Persistence:
 - Lower section contains configuration fields and Save button.
 - Reboot action is available to apply network changes when needed.
 - Fan RPM is displayed in Web UI only; SNMP GET does not expose fan RPM.
+- `freq` OID value comes from Web UI configuration field `FM Frequency (kHz)` and is returned as integer kHz.
 
 ## Fan PWM control
 
@@ -153,7 +154,12 @@ Persistence:
 	- Linear: Y = K * X + Offset
 	- Quadratic: Y = A*X^2 + B*X + C
 	- LUT table with linear interpolation between points
-- LUT input format in UI: adc:value;adc:value (example: 1800:0;2200:25;2600:100)
+- LUT input format in UI: volt:value;volt:value (example: 0.375:0;0.458:25;0.542:100)
+- Voltage-domain helper (for LUT X-axis and coefficient input):
+	- Divider resistors are 4.7k (top) and 10k (bottom), so ADC sees $V_{adc}=V_{in}*10/(4.7+10)$.
+	- Reconstruct input voltage with $V_{in}=V_{adc}*(4.7+10)/10=1.47*V_{adc}$.
+	- ADS1115 (GAIN_ONE) conversion is $V_{adc}=ADC*4.096/32767$, therefore $V_{in}=ADC*4.096/32767*1.47$.
+	- Example: ADC=2200 gives about $V_{in}=0.404$ V, so a LUT point can be entered as 0.404:measured_value.
 - Calibration values are saved in Flash/NVS through ConfigManager.
 - UI validates LUT rows before save and shows per-channel row error messages.
 - Forward and Reflect channels include preset LUT buttons based on the reference example.

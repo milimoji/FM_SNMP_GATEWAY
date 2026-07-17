@@ -4,6 +4,18 @@ namespace {
 const char* kPrefsNamespace = "fm_snmp_cfg";
 constexpr char kFixedWifiSsid[] = "FM_GATEWAY_AP";
 constexpr char kFixedWifiPassword[] = "fm_gateway_2026";
+constexpr float kAdsFullScaleV = 4.096f;
+constexpr float kAdsMaxCode = 32767.0f;
+constexpr float kDividerTopOhm = 4700.0f;
+constexpr float kDividerBottomOhm = 10000.0f;
+constexpr float kDividerInputOverAdc = (kDividerTopOhm + kDividerBottomOhm) / kDividerBottomOhm;
+
+uint16_t sanitizeCpuFreq(uint16_t mhz) {
+  if (mhz == 80 || mhz == 160 || mhz == 240) {
+    return mhz;
+  }
+  return 240;
+}
 
 uint32_t ipToU32(const IPAddress& ip) {
   return (static_cast<uint32_t>(ip[0]) << 24) | (static_cast<uint32_t>(ip[1]) << 16) |
@@ -31,7 +43,7 @@ String serializeLut(const std::vector<LutPoint>& lut) {
     if (i > 0) {
       out += ";";
     }
-    out += String(lut[i].adc);
+    out += String(lut[i].inputVoltage, 4);
     out += ":";
     out += String(lut[i].value, 4);
   }
@@ -51,9 +63,14 @@ void deserializeLut(const String& text, std::vector<LutPoint>& lut) {
     const String token = text.substring(start, end);
     const int sep = token.indexOf(':');
     if (sep > 0) {
-      const int16_t adc = static_cast<int16_t>(token.substring(0, sep).toInt());
+      const float x = token.substring(0, sep).toFloat();
       const float value = token.substring(sep + 1).toFloat();
-      lut.push_back({adc, value});
+      float inputVoltage = x;
+      // Backward compatibility: old configs stored raw ADC in LUT x-axis.
+      if (x > 6.0f) {
+        inputVoltage = x * (kAdsFullScaleV / kAdsMaxCode) * kDividerInputOverAdc;
+      }
+      lut.push_back({inputVoltage, value});
     }
 
     start = end + 1;
@@ -102,6 +119,9 @@ bool ConfigManager::load() {
   config_.snmp.trapServer =
       u32ToIp(preferences_.getULong("trap_ip", ipToU32(config_.snmp.trapServer)));
   config_.snmp.trapPort = preferences_.getUShort("trap_port", config_.snmp.trapPort);
+  config_.snmp.freqKHz = preferences_.getULong("freq_khz", config_.snmp.freqKHz);
+    config_.cpuFreqMhz =
+      sanitizeCpuFreq(preferences_.getUShort("cpu_mhz", config_.cpuFreqMhz));
   config_.samplePeriodMs = preferences_.getUShort("samp_ms", config_.samplePeriodMs);
   config_.alarmActiveLow = preferences_.getBool("alm_low", config_.alarmActiveLow);
 
@@ -165,6 +185,8 @@ bool ConfigManager::save() {
   preferences_.putULong("dns", ipToU32(config_.network.dns));
   preferences_.putULong("trap_ip", ipToU32(config_.snmp.trapServer));
   preferences_.putUShort("trap_port", config_.snmp.trapPort);
+  preferences_.putULong("freq_khz", config_.snmp.freqKHz);
+  preferences_.putUShort("cpu_mhz", sanitizeCpuFreq(config_.cpuFreqMhz));
   preferences_.putUShort("samp_ms", config_.samplePeriodMs);
   preferences_.putBool("alm_low", config_.alarmActiveLow);
   preferences_.putString("community", config_.snmp.community);
@@ -205,11 +227,11 @@ void ConfigManager::applyDefaultCalibration() {
   // Example LUT for RF forward channel based on specification values.
   config_.calibration[0].mode = CalibrationMode::Lut;
   config_.calibration[0].lut = {
-      {1800, 0.0f},
-      {2200, 25.0f},
-      {2600, 100.0f},
-      {3200, 300.0f},
-      {3500, 500.0f},
+      {0.3750f, 0.0f},
+      {0.4584f, 25.0f},
+      {0.5417f, 100.0f},
+      {0.6666f, 300.0f},
+      {0.7291f, 500.0f},
   };
 
   for (uint8_t i = 1; i < 4; ++i) {
@@ -218,8 +240,8 @@ void ConfigManager::applyDefaultCalibration() {
     config_.calibration[i].offset = 0.0f;
   }
 
-  // AIN2 temperature calibration: 0.0V -> 0C, 3.3V -> 100C.
-  // ADS1115 at GAIN_ONE has full-scale 4.096V, so k = 100 / (32767 * 3.3 / 4.096).
-  config_.calibration[2].k = 100.0f / (32767.0f * 3.3f / 4.096f);
+  // AIN2 temperature calibration uses input voltage domain after divider compensation.
+  // 0.0V -> 0C, 5.0V -> 100C.
+  config_.calibration[2].k = 20.0f;
   config_.calibration[2].offset = 0.0f;
 }

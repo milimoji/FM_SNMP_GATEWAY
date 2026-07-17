@@ -13,7 +13,7 @@ enum class CalibrationMode : uint8_t {
 };
 
 struct LutPoint {
-  int16_t adc;
+  float inputVoltage;
   float value;
 };
 
@@ -49,12 +49,14 @@ struct SnmpSettings {
   char community[32] = "public";
   IPAddress trapServer = IPAddress(192, 168, 1, 100);
   uint16_t trapPort = 162;
+  uint32_t freqKHz = 0;
 };
 
 struct DeviceConfig {
   NetworkSettings network;
   SnmpSettings snmp;
   CalibrationProfile calibration[4];
+  uint16_t cpuFreqMhz = 240;
   bool alarmActiveLow = true;
   uint8_t fanTachPin = PinConfig::kFanTachPin;
   uint8_t fanPulsesPerRev = 2;

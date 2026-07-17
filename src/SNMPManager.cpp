@@ -80,15 +80,14 @@ void SNMPManager::onAlarmEdge(bool active, const SnmpTelemetry& telemetry) {
     return;
   }
 
-  SNMP::Message* trap = new SNMP::Message(
+    SNMP::Message trap(
       SNMP::Version::V2C,
       cfg_->snmp.community,
       SNMP::Type::SNMPv2Trap);
-  trap->setSNMPTrapOID(kEventTxAlarmOid);
-  trap->add(kTsTxAlarmOid, new SNMP::IntegerBER(active ? 1 : 0));
+    trap.setSNMPTrapOID(kEventTxAlarmOid);
+    trap.add(kTsTxAlarmOid, new SNMP::IntegerBER(active ? 1 : 0));
 
-  snmp_->send(trap, cfg_->snmp.trapServer, cfg_->snmp.trapPort);
-  delete trap;
+    snmp_->send(&trap, cfg_->snmp.trapServer, cfg_->snmp.trapPort);
 }
 
 void SNMPManager::emitTrap(const char* eventName, const SnmpTelemetry& telemetry) const {
@@ -161,15 +160,14 @@ void SNMPManager::handleRequest(const SNMP::Message* request, const IPAddress re
     return;
   }
 
-  SNMP::Message* response = new SNMP::Message(
+  SNMP::Message response(
       request->getVersion(),
       request->getCommunity(),
       SNMP::Type::GetResponse);
-  response->setRequestID(request->getRequestID());
+  response.setRequestID(request->getRequestID());
 
-  buildResponse(request, response);
-  snmp_->send(response, remote, port);
-  delete response;
+  buildResponse(request, &response);
+  snmp_->send(&response, remote, port);
 }
 
 void SNMPManager::buildResponse(const SNMP::Message* request, SNMP::Message* response) const {
@@ -275,20 +273,23 @@ int SNMPManager::compareOids(const char* lhs, const char* rhs) {
 
 SNMP::BER* SNMPManager::buildValueForOid(const OidBinding& binding) const {
   if (binding.name == "fwd") {
-    return new SNMP::OpaqueBER(new SNMP::OpaqueFloatBER(telemetry_.analog.forward));
+    const int32_t fwdX10 = static_cast<int32_t>(lroundf(telemetry_.analog.forward * 10.0f));
+    return new SNMP::IntegerBER(fwdX10);
   }
   if (binding.name == "ref") {
-    return new SNMP::OpaqueBER(new SNMP::OpaqueFloatBER(telemetry_.analog.reflect));
+    const int32_t refX10 = static_cast<int32_t>(lroundf(telemetry_.analog.reflect * 10.0f));
+    return new SNMP::IntegerBER(refX10);
   }
   if (binding.name == "temp") {
     const int32_t tempX10 = static_cast<int32_t>(lroundf(telemetry_.analog.temperature * 10.0f));
     return new SNMP::IntegerBER(tempX10);
   }
   if (binding.name == "freq") {
-    return new SNMP::IntegerBER(static_cast<int32_t>(telemetry_.fanRpm));
+    return new SNMP::IntegerBER(static_cast<int32_t>(cfg_ != nullptr ? cfg_->snmp.freqKHz : 0));
   }
   if (binding.name == "modu") {
-    return new SNMP::IntegerBER(static_cast<int32_t>(telemetry_.fanDutyPercent));
+    const int32_t devX10 = static_cast<int32_t>(lroundf(telemetry_.analog.deviation * 10.0f));
+    return new SNMP::IntegerBER(devX10);
   }
   if (binding.name == "alarmTx") {
     return new SNMP::IntegerBER(telemetry_.alarm.alarmActive ? 1 : 0);

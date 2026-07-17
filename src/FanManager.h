@@ -36,11 +36,16 @@ class FanManager {
   static FanManager* instance_;
 
   volatile uint32_t pulseCounter_ = 0;
+  volatile uint32_t lastPulseUs_ = 0;
   uint32_t lastPulseCounter_ = 0;
   uint32_t lastUpdateMs_ = 0;
   uint8_t tachPin_ = 255;
   uint8_t pulsesPerRev_ = 2;
   uint16_t rpm_ = 0;
+  uint16_t maxValidRpm_ = 11000;
+  uint32_t minPulseIntervalUs_ = 1500;
+  float filteredRpm_ = 0.0f;
+  bool rpmFilterInitialized_ = false;
 
   bool pwmEnabled_ = false;
   uint8_t pwmPin_ = 255;

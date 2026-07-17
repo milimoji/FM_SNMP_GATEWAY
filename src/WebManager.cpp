@@ -1,6 +1,12 @@
 #include "WebManager.h"
 
 namespace {
+constexpr float kAdsFullScaleV = 4.096f;
+constexpr float kAdsMaxCode = 32767.0f;
+constexpr float kDividerTopOhm = 4700.0f;
+constexpr float kDividerBottomOhm = 10000.0f;
+constexpr float kDividerInputOverAdc = (kDividerTopOhm + kDividerBottomOhm) / kDividerBottomOhm;
+
 void sendEthHeaders(EthernetClient& client,
                     const char* status,
                     const char* contentType,
@@ -56,33 +62,48 @@ const char kIndexHtml[] PROGMEM = R"HTML(
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>FM SNMP Gateway</title>
   <style>
-    body{font-family:Arial,sans-serif;background:#f4f7fb;color:#111;margin:0;padding:16px}
-    .card{background:#fff;border:1px solid #dfe5ef;border-radius:12px;padding:14px;margin-bottom:14px}
-    h1{margin:0 0 12px;font-size:22px}
-    .row{display:grid;grid-template-columns:1fr 1fr;gap:8px}
-    .metric{font-size:18px;font-weight:700}
-    .label{font-size:12px;color:#666}
-    .vu{height:18px;background:#e5ebf5;border-radius:9px;overflow:hidden}
-    .vu-bar{height:100%;width:0;background:linear-gradient(90deg,#1d8f4b,#e4b600,#d91e18)}
-    label{display:block;font-size:13px;margin-top:8px}
-    input{width:100%;padding:8px;border:1px solid #c8d2e1;border-radius:8px}
-    textarea{width:100%;padding:8px;border:1px solid #c8d2e1;border-radius:8px;min-height:70px}
-    button{margin-top:10px;padding:10px 14px;border:0;border-radius:8px;background:#1847a8;color:#fff}
-    .muted{font-size:12px;color:#666}
-    .err{color:#b00020}
-    .ch{border:1px dashed #cbd5e6;padding:10px;border-radius:10px;margin-top:10px}
+    :root{--bg:#111827;--card:#1f2937;--accent:#3b82f6;--text:#f3f4f6;--muted:#9ca3af;--line:#374151;--ok:#22c55e}
+    *{box-sizing:border-box}
+    body{font-family:Segoe UI,Arial,sans-serif;background:var(--bg);color:var(--text);margin:0;padding:24px}
+    .header{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:20px;flex-wrap:wrap}
+    .header h1{margin:0;font-size:28px;letter-spacing:.2px}
+    .statusPill{padding:8px 12px;border-radius:999px;background:#14532d;color:#dcfce7;font-weight:700;font-size:12px;border:1px solid #166534}
+    .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:18px;margin-bottom:14px;box-shadow:0 4px 16px rgba(0,0,0,.3)}
+    h2{margin:0 0 12px;font-size:20px}
+    .row{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px}
+    .tile{background:#111827;border:1px solid var(--line);border-radius:12px;padding:12px}
+    .metric{font-size:24px;font-weight:700;margin-top:4px;overflow-wrap:anywhere}
+    #fanStatus{font-size:16px;line-height:1.2;word-break:break-word}
+    .label{font-size:12px;color:var(--muted)}
+    .vu{height:18px;background:#0b1220;border-radius:9px;overflow:hidden;border:1px solid var(--line)}
+    .vu-bar{height:100%;width:0;background:#1d8f4b}
+    label{display:block;font-size:13px;margin-top:8px;color:#d1d5db}
+    input{width:100%;padding:10px;border:1px solid var(--line);border-radius:8px;background:#111827;color:#f9fafb}
+    textarea{width:100%;padding:10px;border:1px solid var(--line);border-radius:8px;min-height:70px;background:#111827;color:#f9fafb}
+    button{margin-top:10px;padding:10px 14px;border:0;border-radius:8px;background:var(--accent);color:#fff;font-weight:700;cursor:pointer}
+    button:hover{filter:brightness(1.08)}
+    .muted{font-size:12px;color:var(--muted)}
+    .err{color:#fca5a5}
+    .ch{border:1px dashed var(--line);padding:10px;border-radius:10px;margin-top:10px;background:#111827}
   </style>
 </head>
 <body>
-  <div class="card">
+  <div class="header">
     <h1>FM SNMP Gateway</h1>
+    <div class="statusPill" id="linkBadge">LINK UNKNOWN</div>
+  </div>
+
+  <div class="card">
     <div class="row">
-      <div><div class="label">Forward</div><div class="metric" id="fwd">0</div></div>
-      <div><div class="label">Reflect</div><div class="metric" id="ref">0</div></div>
-      <div><div class="label">Temperature</div><div class="metric" id="temp">0</div></div>
-      <div><div class="label">Fan RPM</div><div class="metric" id="fan">0</div></div>
-      <div><div class="label">Fan PWM</div><div class="metric" id="fanDuty">0%</div></div>
-      <div><div class="label">Fan Status</div><div class="metric" id="fanStatus">N/A</div></div>
+      <div class="tile"><div class="label">Forward</div><div class="metric" id="fwd">0</div></div>
+      <div class="tile"><div class="label">Reflect</div><div class="metric" id="ref">0</div></div>
+      <div class="tile"><div class="label">Temperature</div><div class="metric" id="temp">0</div></div>
+      <div class="tile"><div class="label">ESP32 Core Temp</div><div class="metric" id="coreTemp">0</div></div>
+      <div class="tile"><div class="label">CPU Clock</div><div class="metric" id="cpuMhz">0 MHz</div></div>
+      <div class="tile"><div class="label">Free Heap</div><div class="metric" id="heapKb">0 kB</div></div>
+      <div class="tile"><div class="label">Fan RPM</div><div class="metric" id="fan">0</div></div>
+      <div class="tile"><div class="label">Fan PWM</div><div class="metric" id="fanDuty">0%</div></div>
+      <div class="tile"><div class="label">Fan Status</div><div class="metric" id="fanStatus">N/A</div></div>
     </div>
     <div class="label" style="margin-top:12px">Deviation</div>
     <div class="metric" id="dev">0</div>
@@ -105,6 +126,8 @@ const char kIndexHtml[] PROGMEM = R"HTML(
       <label>ETH DNS</label><input name="dns" id="dns" placeholder="8.8.8.8" />
       <label>SNMP Trap IP</label><input name="trapIp" id="trapIp" placeholder="192.168.1.100" />
       <label>SNMP Trap Port</label><input name="trapPort" id="trapPort" type="number" min="1" max="65535" step="1" />
+      <label>FM Frequency (kHz)</label><input name="freqKHz" id="freqKHz" type="number" min="0" max="300000" step="1" />
+      <label>CPU Clock (MHz: 80/160/240)</label><input name="cpuFreqMhz" id="cpuFreqMhz" type="number" min="80" max="240" step="80" />
       <button type="submit">Save Network</button>
     </form>
     <button id="rebootBtn">Save and Reboot</button>
@@ -127,7 +150,7 @@ const char kIndexHtml[] PROGMEM = R"HTML(
 
   <div class="card">
     <h2>ADC Calibration</h2>
-    <p class="muted">Mode: 0=Linear, 1=Quadratic, 2=LUT. LUT format: adc:value;adc:value</p>
+    <p class="muted">Mode: 0=Linear, 1=Quadratic, 2=LUT. Kalibracija radi nad ulaznim naponom (V). LUT format: volt:value;volt:value (npr. 0.375:0;0.458:25)</p>
     <form id="calibrationForm">
     <div class="ch">
       <div class="label">Channel 0 (Forward)</div>
@@ -138,7 +161,6 @@ const char kIndexHtml[] PROGMEM = R"HTML(
       <label>Quadratic B</label><input name="c0B" id="c0B" type="number" step="0.0001" />
       <label>Quadratic C</label><input name="c0C" id="c0C" type="number" step="0.0001" />
       <label>LUT</label><textarea name="c0Lut" id="c0Lut"></textarea>
-      <button type="button" id="c0PresetBtn">Load Forward Preset</button>
       <div class="muted err" id="c0LutErr"></div>
     </div>
     <div class="ch">
@@ -150,7 +172,6 @@ const char kIndexHtml[] PROGMEM = R"HTML(
       <label>Quadratic B</label><input name="c1B" id="c1B" type="number" step="0.0001" />
       <label>Quadratic C</label><input name="c1C" id="c1C" type="number" step="0.0001" />
       <label>LUT</label><textarea name="c1Lut" id="c1Lut"></textarea>
-      <button type="button" id="c1PresetBtn">Load Reflect Preset</button>
       <div class="muted err" id="c1LutErr"></div>
     </div>
     <div class="ch">
@@ -162,7 +183,6 @@ const char kIndexHtml[] PROGMEM = R"HTML(
       <label>Quadratic B</label><input name="c2B" id="c2B" type="number" step="0.0001" />
       <label>Quadratic C</label><input name="c2C" id="c2C" type="number" step="0.0001" />
       <label>LUT</label><textarea name="c2Lut" id="c2Lut"></textarea>
-      <button type="button" id="c2PresetBtn">Load Temperature Preset</button>
       <div class="muted err" id="c2LutErr"></div>
     </div>
     <div class="ch">
@@ -174,7 +194,6 @@ const char kIndexHtml[] PROGMEM = R"HTML(
       <label>Quadratic B</label><input name="c3B" id="c3B" type="number" step="0.0001" />
       <label>Quadratic C</label><input name="c3C" id="c3C" type="number" step="0.0001" />
       <label>LUT</label><textarea name="c3Lut" id="c3Lut"></textarea>
-      <button type="button" id="c3PresetBtn">Load Deviation Preset</button>
       <div class="muted err" id="c3LutErr"></div>
     </div>
     <button type="submit">Save Calibration</button>
@@ -191,6 +210,9 @@ const char kIndexHtml[] PROGMEM = R"HTML(
       document.getElementById('fwd').textContent = Number(d.forward ?? 0).toFixed(2);
       document.getElementById('ref').textContent = Number(d.reflect ?? 0).toFixed(2);
       document.getElementById('temp').textContent = Number(d.temperature ?? 0).toFixed(2);
+      document.getElementById('coreTemp').textContent = Number(d.espCoreTempC ?? 0).toFixed(2);
+      document.getElementById('cpuMhz').textContent = `${d.cpuFreqMhz ?? 0} MHz`;
+      document.getElementById('heapKb').textContent = `${Math.round(Number(d.freeHeapBytes ?? 0) / 1024)} kB`;
       document.getElementById('fan').textContent = String(d.fanRpm ?? 0);
       document.getElementById('fanDuty').textContent = `${d.fanDutyPercent ?? 0}%`;
       const fanStatusText = ['FAN_CFG_OK','FAN_CFG_CLAMPED','FAN_TACH_MISSING'][d.fanHealthStatus] || 'FAN_STATUS_UNKNOWN';
@@ -198,8 +220,32 @@ const char kIndexHtml[] PROGMEM = R"HTML(
       const dev = Number(d.deviation ?? 0);
       document.getElementById('dev').textContent = dev.toFixed(2);
       const p = Math.max(0, Math.min(100, dev));
-      document.getElementById('devBar').style.width = `${p}%`;
-      document.getElementById('net').textContent = `Link: ${d.activeLink || 'UNKNOWN'} IP: ${d.ip || location.hostname}`;
+      const devBar = document.getElementById('devBar');
+      devBar.style.width = `${p}%`;
+      if (p <= 70) {
+        devBar.style.background = '#1d8f4b';
+      } else if (p <= 75) {
+        devBar.style.background = '#e4b600';
+      } else {
+        devBar.style.background = '#d91e18';
+      }
+      const activeLink = d.activeLink || 'UNKNOWN';
+      const linkBadge = document.getElementById('linkBadge');
+      linkBadge.textContent = `${activeLink} Connected`;
+      if (activeLink === 'ETH') {
+        linkBadge.style.background = '#14532d';
+        linkBadge.style.borderColor = '#166534';
+        linkBadge.style.color = '#dcfce7';
+      } else if (activeLink === 'WIFI') {
+        linkBadge.style.background = '#1e3a8a';
+        linkBadge.style.borderColor = '#1d4ed8';
+        linkBadge.style.color = '#dbeafe';
+      } else {
+        linkBadge.style.background = '#3f3f46';
+        linkBadge.style.borderColor = '#52525b';
+        linkBadge.style.color = '#e4e4e7';
+      }
+      document.getElementById('net').textContent = `Link: ${activeLink} IP: ${d.ip || location.hostname}`;
     };
 
     const applyConfig = (c) => {
@@ -218,6 +264,8 @@ const char kIndexHtml[] PROGMEM = R"HTML(
       document.getElementById('dns').value = c.dns || '';
       document.getElementById('trapIp').value = c.trapIp || '';
       document.getElementById('trapPort').value = String(c.trapPort ?? 162);
+      document.getElementById('freqKHz').value = String(c.freqKHz ?? 0);
+      document.getElementById('cpuFreqMhz').value = String(c.cpuFreqMhz ?? 240);
       document.getElementById('fanPwmEnabled').value = c.fanPwmEnabled ? '1' : '0';
       document.getElementById('fanTempStartC').value = String(c.fanTempStartC ?? 30.0);
       document.getElementById('fanTempMaxC').value = String(c.fanTempMaxC ?? 65.0);
@@ -257,8 +305,6 @@ const char kIndexHtml[] PROGMEM = R"HTML(
     setInterval(syncState, 1000);
     syncState();
 
-    const DEFAULT_LUT_PRESET = '1800:0;2200:25;2600:100;3200:300;3500:500';
-
     const validateLut = (text) => {
       const clean = (text || '').trim();
       if (!clean) {
@@ -274,13 +320,13 @@ const char kIndexHtml[] PROGMEM = R"HTML(
 
         const fields = row.split(':');
         if (fields.length !== 2) {
-          return `LUT red ${i + 1}: format mora biti adc:value`;
+          return `LUT red ${i + 1}: format mora biti volt:value`;
         }
 
-        const adc = Number(fields[0]);
+        const inputV = Number(fields[0]);
         const val = Number(fields[1]);
-        if (!Number.isFinite(adc) || !Number.isInteger(adc)) {
-          return `LUT red ${i + 1}: adc mora biti ceo broj`;
+        if (!Number.isFinite(inputV) || inputV < 0 || inputV > 6.0) {
+          return `LUT red ${i + 1}: volt mora biti broj u opsegu 0..6`;
         }
         if (!Number.isFinite(val)) {
           return `LUT red ${i + 1}: value mora biti broj`;
@@ -295,16 +341,6 @@ const char kIndexHtml[] PROGMEM = R"HTML(
         document.getElementById(`c${i}LutErr`).textContent = '';
       }
     };
-
-    const applyPreset = (channel) => {
-      document.getElementById(`c${channel}Mode`).value = '2';
-      document.getElementById(`c${channel}Lut`).value = DEFAULT_LUT_PRESET;
-    };
-
-    document.getElementById('c0PresetBtn').addEventListener('click', () => applyPreset(0));
-    document.getElementById('c1PresetBtn').addEventListener('click', () => applyPreset(1));
-    document.getElementById('c2PresetBtn').addEventListener('click', () => applyPreset(2));
-    document.getElementById('c3PresetBtn').addEventListener('click', () => applyPreset(3));
 
     const postForm = async (formId, messageId) => {
       const form = document.getElementById(formId);
@@ -363,7 +399,14 @@ const char kIndexHtml[] PROGMEM = R"HTML(
       }
 
       const resp = await fetch('/api/config/save', { method: 'POST', body: params });
-      document.getElementById('calMsg').textContent = await resp.text();
+      if (resp.ok) {
+        document.getElementById('calMsg').textContent = 'Calibration saved.';
+      } else {
+        const errorText = await resp.text();
+        document.getElementById('calMsg').textContent = errorText || 'Failed to save calibration.';
+      }
+      configLoaded = false;
+      await syncState();
     });
 
     document.getElementById('rebootBtn').addEventListener('click', async () => {
@@ -548,6 +591,8 @@ String WebManager::buildConfigJson() const {
   payload += "\"dns\":\"" + cfg.network.dns.toString() + "\",";
   payload += "\"trapIp\":\"" + cfg.snmp.trapServer.toString() + "\",";
   payload += "\"trapPort\":" + String(cfg.snmp.trapPort) + ",";
+  payload += "\"freqKHz\":" + String(cfg.snmp.freqKHz) + ",";
+  payload += "\"cpuFreqMhz\":" + String(cfg.cpuFreqMhz) + ",";
   payload += "\"fanPwmEnabled\":" + String(cfg.fanPwmEnabled ? "true" : "false") + ",";
   payload += "\"fanTempStartC\":" + String(cfg.fanTempStartC, 2) + ",";
   payload += "\"fanTempMaxC\":" + String(cfg.fanTempMaxC, 2) + ",";
@@ -565,7 +610,7 @@ String WebManager::buildConfigJson() const {
       if (j > 0) {
         lut += ";";
       }
-      lut += String(c.lut[j].adc);
+      lut += String(c.lut[j].inputVoltage, 4);
       lut += ":";
       lut += String(c.lut[j].value, 4);
     }
@@ -590,13 +635,16 @@ String WebManager::buildStateJson(const SnmpTelemetry& telemetry) const {
     link = "WIFI";
   }
 
-  char telemetryJson[360];
+  char telemetryJson[560];
   snprintf(telemetryJson,
            sizeof(telemetryJson),
-           "{\"forward\":%.2f,\"reflect\":%.2f,\"temperature\":%.2f,\"deviation\":%.2f,\"fanRpm\":%u,\"fanDutyPercent\":%u,\"fanHealthStatus\":%u,\"activeLink\":\"%s\",\"ip\":\"%s\"}",
+           "{\"forward\":%.2f,\"reflect\":%.2f,\"temperature\":%.2f,\"espCoreTempC\":%.2f,\"cpuFreqMhz\":%u,\"freeHeapBytes\":%lu,\"deviation\":%.2f,\"fanRpm\":%u,\"fanDutyPercent\":%u,\"fanHealthStatus\":%u,\"activeLink\":\"%s\",\"ip\":\"%s\"}",
            telemetry.analog.forward,
            telemetry.analog.reflect,
            telemetry.analog.temperature,
+           telemetry.espCoreTempC,
+           static_cast<unsigned>(telemetry.cpuFreqMhz),
+           static_cast<unsigned long>(telemetry.freeHeapBytes),
            telemetry.analog.deviation,
            static_cast<unsigned>(telemetry.fanRpm),
            static_cast<unsigned>(telemetry.fanDutyPercent),
@@ -652,6 +700,18 @@ bool WebManager::applyConfigFromFormBody(const String& body) {
     const int trapPort = value.toInt();
     if (trapPort >= 1 && trapPort <= 65535) {
       cfg.snmp.trapPort = static_cast<uint16_t>(trapPort);
+    }
+  }
+  if (getFormArg(body, "freqKHz", value)) {
+    const long freqKHz = value.toInt();
+    if (freqKHz >= 0) {
+      cfg.snmp.freqKHz = static_cast<uint32_t>(freqKHz);
+    }
+  }
+  if (getFormArg(body, "cpuFreqMhz", value)) {
+    const int cpuFreq = value.toInt();
+    if (cpuFreq == 80 || cpuFreq == 160 || cpuFreq == 240) {
+      cfg.cpuFreqMhz = static_cast<uint16_t>(cpuFreq);
     }
   }
 
@@ -757,7 +817,7 @@ void WebManager::publishStatusWebSocket(const SnmpTelemetry& telemetry) {
     return;
   }
 
-  char payload[420];
+  char payload[560];
   const char* link = "NONE";
   if (telemetry.network.activeLink == LinkType::Ethernet) {
     link = "ETH";
@@ -767,10 +827,13 @@ void WebManager::publishStatusWebSocket(const SnmpTelemetry& telemetry) {
 
   snprintf(payload,
            sizeof(payload),
-           "{\"type\":\"telemetry\",\"forward\":%.2f,\"reflect\":%.2f,\"temperature\":%.2f,\"deviation\":%.2f,\"fanRpm\":%u,\"fanDutyPercent\":%u,\"fanHealthStatus\":%u,\"activeLink\":\"%s\",\"ip\":\"%s\"}",
+           "{\"type\":\"telemetry\",\"forward\":%.2f,\"reflect\":%.2f,\"temperature\":%.2f,\"espCoreTempC\":%.2f,\"cpuFreqMhz\":%u,\"freeHeapBytes\":%lu,\"deviation\":%.2f,\"fanRpm\":%u,\"fanDutyPercent\":%u,\"fanHealthStatus\":%u,\"activeLink\":\"%s\",\"ip\":\"%s\"}",
            telemetry.analog.forward,
            telemetry.analog.reflect,
            telemetry.analog.temperature,
+           telemetry.espCoreTempC,
+           static_cast<unsigned>(telemetry.cpuFreqMhz),
+           static_cast<unsigned long>(telemetry.freeHeapBytes),
            telemetry.analog.deviation,
            static_cast<unsigned>(telemetry.fanRpm),
            static_cast<unsigned>(telemetry.fanDutyPercent),
@@ -828,13 +891,16 @@ void WebManager::handleTelemetryGet() {
     link = "WIFI";
   }
 
-  char payload[360];
+  char payload[560];
   snprintf(payload,
            sizeof(payload),
-           "{\"forward\":%.2f,\"reflect\":%.2f,\"temperature\":%.2f,\"deviation\":%.2f,\"fanRpm\":%u,\"fanDutyPercent\":%u,\"fanHealthStatus\":%u,\"activeLink\":\"%s\",\"ip\":\"%s\"}",
+           "{\"forward\":%.2f,\"reflect\":%.2f,\"temperature\":%.2f,\"espCoreTempC\":%.2f,\"cpuFreqMhz\":%u,\"freeHeapBytes\":%lu,\"deviation\":%.2f,\"fanRpm\":%u,\"fanDutyPercent\":%u,\"fanHealthStatus\":%u,\"activeLink\":\"%s\",\"ip\":\"%s\"}",
            latestTelemetry_.analog.forward,
            latestTelemetry_.analog.reflect,
            latestTelemetry_.analog.temperature,
+           latestTelemetry_.espCoreTempC,
+           static_cast<unsigned>(latestTelemetry_.cpuFreqMhz),
+           static_cast<unsigned long>(latestTelemetry_.freeHeapBytes),
            latestTelemetry_.analog.deviation,
            static_cast<unsigned>(latestTelemetry_.fanRpm),
            static_cast<unsigned>(latestTelemetry_.fanDutyPercent),
@@ -891,6 +957,18 @@ void WebManager::handleConfigSave() {
     const int trapPort = httpServer_.arg("trapPort").toInt();
     if (trapPort >= 1 && trapPort <= 65535) {
       cfg.snmp.trapPort = static_cast<uint16_t>(trapPort);
+    }
+  }
+  if (httpServer_.hasArg("freqKHz")) {
+    const long freqKHz = httpServer_.arg("freqKHz").toInt();
+    if (freqKHz >= 0) {
+      cfg.snmp.freqKHz = static_cast<uint32_t>(freqKHz);
+    }
+  }
+  if (httpServer_.hasArg("cpuFreqMhz")) {
+    const int cpuFreq = httpServer_.arg("cpuFreqMhz").toInt();
+    if (cpuFreq == 80 || cpuFreq == 160 || cpuFreq == 240) {
+      cfg.cpuFreqMhz = static_cast<uint16_t>(cpuFreq);
     }
   }
 
@@ -986,9 +1064,14 @@ void WebManager::parseLutText(const String& text, CalibrationProfile& profile) c
     const String token = text.substring(start, end);
     const int sep = token.indexOf(':');
     if (sep > 0) {
-      const int16_t adc = static_cast<int16_t>(token.substring(0, sep).toInt());
+      const float x = token.substring(0, sep).toFloat();
       const float value = token.substring(sep + 1).toFloat();
-      profile.lut.push_back({adc, value});
+      float inputVoltage = x;
+      // Backward compatibility: old UI used raw ADC x-axis in LUT points.
+      if (x > 6.0f) {
+        inputVoltage = x * (kAdsFullScaleV / kAdsMaxCode) * kDividerInputOverAdc;
+      }
+      profile.lut.push_back({inputVoltage, value});
     }
 
     start = end + 1;
