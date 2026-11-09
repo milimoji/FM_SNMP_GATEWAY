@@ -32,9 +32,6 @@ bool SNMPManager::begin(const DeviceConfig* cfg, const char* deviceName) {
   if (ethernetUdp_ == nullptr) {
     ethernetUdp_ = new EthernetUDP();
   }
-  if (wifiUdp_ == nullptr) {
-    wifiUdp_ = new WiFiUDP();
-  }
 
   gSnmpManager = this;
   snmp_->onMessage(onSnmpMessage);
@@ -135,12 +132,6 @@ void SNMPManager::ensureAgentBound() {
         activeUdp_ = ethernetUdp_;
       }
       break;
-    case LinkType::WiFi:
-      if (wifiUdp_ != nullptr) {
-        bound = snmp_->begin(*wifiUdp_);
-        activeUdp_ = wifiUdp_;
-      }
-      break;
     case LinkType::None:
     default:
       boundLink_ = LinkType::None;
@@ -150,8 +141,7 @@ void SNMPManager::ensureAgentBound() {
   if (bound) {
     boundLink_ = desiredLink;
     snmpStackReady_ = true;
-    Serial.printf("SNMP: bound to %s UDP port 161\n",
-                  desiredLink == LinkType::Ethernet ? "Ethernet" : "WiFi");
+    Serial.println("SNMP: bound to Ethernet UDP port 161");
   }
 }
 

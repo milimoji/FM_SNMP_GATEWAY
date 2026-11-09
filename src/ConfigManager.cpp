@@ -1,21 +1,13 @@
 #include "ConfigManager.h"
 
-namespace {
-const char* kPrefsNamespace = "fm_snmp_cfg";
-constexpr char kFixedWifiSsid[] = "FM_GATEWAY_AP";
-constexpr char kFixedWifiPassword[] = "fm_gateway_2026";
-constexpr float kAdsFullScaleV = 4.096f;
-constexpr float kAdsMaxCode = 32767.0f;
-constexpr float kDividerTopOhm = 4700.0f;
-constexpr float kDividerBottomOhm = 10000.0f;
-constexpr float kDividerInputOverAdc = (kDividerTopOhm + kDividerBottomOhm) / kDividerBottomOhm;
+#include <LittleFS.h>
+#include <cstring>
 
-uint16_t sanitizeCpuFreq(uint16_t mhz) {
-  if (mhz == 80 || mhz == 160 || mhz == 240) {
-    return mhz;
-  }
-  return 240;
-}
+namespace {
+constexpr uint32_t kConfigMagic = 0x464D4757u;  // FMGW
+constexpr uint16_t kConfigVersion = 1;
+constexpr uint8_t kMaxLutPoints = 16;
+constexpr const char* kConfigPath = "/fm_config.bin";
 
 uint32_t ipToU32(const IPAddress& ip) {
   return (static_cast<uint32_t>(ip[0]) << 24) | (static_cast<uint32_t>(ip[1]) << 16) |
@@ -26,187 +18,212 @@ IPAddress u32ToIp(uint32_t v) {
   return IPAddress((v >> 24) & 0xFF, (v >> 16) & 0xFF, (v >> 8) & 0xFF, v & 0xFF);
 }
 
-String calibrationPrefix(uint8_t ch) {
-  return String("c") + String(ch) + "_";
-}
+#pragma pack(push, 1)
+struct StoredLutPoint {
+  float inputVoltage;
+  float value;
+};
 
-void applyFixedWifi(NetworkSettings& network) {
-  strncpy(network.wifiSsid, kFixedWifiSsid, sizeof(network.wifiSsid) - 1);
-  network.wifiSsid[sizeof(network.wifiSsid) - 1] = '\0';
-  strncpy(network.wifiPassword, kFixedWifiPassword, sizeof(network.wifiPassword) - 1);
-  network.wifiPassword[sizeof(network.wifiPassword) - 1] = '\0';
-}
+struct StoredCalibration {
+  uint8_t mode;
+  float k;
+  float offset;
+  float a;
+  float b;
+  float c;
+  uint8_t lutCount;
+  StoredLutPoint lut[kMaxLutPoints];
+};
 
-String serializeLut(const std::vector<LutPoint>& lut) {
-  String out;
-  for (size_t i = 0; i < lut.size(); ++i) {
-    if (i > 0) {
-      out += ";";
-    }
-    out += String(lut[i].inputVoltage, 4);
-    out += ":";
-    out += String(lut[i].value, 4);
+struct StoredConfig {
+  uint32_t magic;
+  uint16_t version;
+  uint8_t dhcp;
+  uint8_t alarmActiveLow;
+  uint8_t fanPwmEnabled;
+  uint8_t fanTachPin;
+  uint8_t fanPwmPin;
+  uint8_t fanPulsesPerRev;
+  uint8_t fanMinDutyPercent;
+  uint8_t fanMaxDutyPercent;
+  uint16_t fanStartupMaxSec;
+  uint16_t samplePeriodMs;
+  uint16_t trapPort;
+  uint32_t ip;
+  uint32_t gateway;
+  uint32_t subnet;
+  uint32_t dns;
+  uint32_t trapServer;
+  uint32_t freqKHz;
+  float fanTempStartC;
+  float fanTempMaxC;
+  char hostname[32];
+  char community[32];
+  StoredCalibration calibration[4];
+};
+#pragma pack(pop)
+
+void copyCString(char* dst, size_t dstSize, const char* src) {
+  if (dstSize == 0) {
+    return;
   }
-  return out;
+  strncpy(dst, src == nullptr ? "" : src, dstSize - 1);
+  dst[dstSize - 1] = '\0';
 }
 
-void deserializeLut(const String& text, std::vector<LutPoint>& lut) {
-  lut.clear();
-  int start = 0;
+void toStored(const DeviceConfig& cfg, StoredConfig& stored) {
+  memset(&stored, 0, sizeof(stored));
+  stored.magic = kConfigMagic;
+  stored.version = kConfigVersion;
+  stored.dhcp = cfg.network.dhcp ? 1 : 0;
+  stored.alarmActiveLow = cfg.alarmActiveLow ? 1 : 0;
+  stored.fanPwmEnabled = cfg.fanPwmEnabled ? 1 : 0;
+  stored.fanTachPin = cfg.fanTachPin;
+  stored.fanPwmPin = cfg.fanPwmPin;
+  stored.fanPulsesPerRev = cfg.fanPulsesPerRev;
+  stored.fanMinDutyPercent = cfg.fanMinDutyPercent;
+  stored.fanMaxDutyPercent = cfg.fanMaxDutyPercent;
+  stored.fanStartupMaxSec = cfg.fanStartupMaxSec;
+  stored.samplePeriodMs = cfg.samplePeriodMs;
+  stored.trapPort = cfg.snmp.trapPort;
+  stored.ip = ipToU32(cfg.network.ip);
+  stored.gateway = ipToU32(cfg.network.gateway);
+  stored.subnet = ipToU32(cfg.network.subnet);
+  stored.dns = ipToU32(cfg.network.dns);
+  stored.trapServer = ipToU32(cfg.snmp.trapServer);
+  stored.freqKHz = cfg.snmp.freqKHz;
+  stored.fanTempStartC = cfg.fanTempStartC;
+  stored.fanTempMaxC = cfg.fanTempMaxC;
+  copyCString(stored.hostname, sizeof(stored.hostname), cfg.network.hostname);
+  copyCString(stored.community, sizeof(stored.community), cfg.snmp.community);
 
-  while (start < text.length()) {
-    int end = text.indexOf(';', start);
-    if (end < 0) {
-      end = text.length();
+  for (uint8_t ch = 0; ch < 4; ++ch) {
+    const CalibrationProfile& src = cfg.calibration[ch];
+    StoredCalibration& dst = stored.calibration[ch];
+    dst.mode = static_cast<uint8_t>(src.mode);
+    dst.k = src.k;
+    dst.offset = src.offset;
+    dst.a = src.a;
+    dst.b = src.b;
+    dst.c = src.c;
+    const size_t count = src.lut.size() > kMaxLutPoints ? kMaxLutPoints : src.lut.size();
+    dst.lutCount = static_cast<uint8_t>(count);
+    for (size_t i = 0; i < count; ++i) {
+      dst.lut[i].inputVoltage = src.lut[i].inputVoltage;
+      dst.lut[i].value = src.lut[i].value;
     }
-
-    const String token = text.substring(start, end);
-    const int sep = token.indexOf(':');
-    if (sep > 0) {
-      const float x = token.substring(0, sep).toFloat();
-      const float value = token.substring(sep + 1).toFloat();
-      float inputVoltage = x;
-      // Backward compatibility: old configs stored raw ADC in LUT x-axis.
-      if (x > 6.0f) {
-        inputVoltage = x * (kAdsFullScaleV / kAdsMaxCode) * kDividerInputOverAdc;
-      }
-      lut.push_back({inputVoltage, value});
-    }
-
-    start = end + 1;
   }
 }
+
+void fromStored(const StoredConfig& stored, DeviceConfig& cfg) {
+  cfg.network.dhcp = stored.dhcp != 0;
+  cfg.alarmActiveLow = stored.alarmActiveLow != 0;
+  cfg.fanPwmEnabled = stored.fanPwmEnabled != 0;
+  cfg.fanTachPin = stored.fanTachPin;
+  cfg.fanPwmPin = stored.fanPwmPin;
+  cfg.fanPulsesPerRev = stored.fanPulsesPerRev == 0 ? 1 : stored.fanPulsesPerRev;
+  cfg.fanMinDutyPercent = stored.fanMinDutyPercent;
+  cfg.fanMaxDutyPercent = stored.fanMaxDutyPercent;
+  cfg.fanStartupMaxSec = stored.fanStartupMaxSec;
+  cfg.samplePeriodMs = stored.samplePeriodMs == 0 ? 50 : stored.samplePeriodMs;
+  cfg.snmp.trapPort = stored.trapPort == 0 ? 162 : stored.trapPort;
+  cfg.network.ip = u32ToIp(stored.ip);
+  cfg.network.gateway = u32ToIp(stored.gateway);
+  cfg.network.subnet = u32ToIp(stored.subnet);
+  cfg.network.dns = u32ToIp(stored.dns);
+  cfg.snmp.trapServer = u32ToIp(stored.trapServer);
+  cfg.snmp.freqKHz = stored.freqKHz;
+  cfg.fanTempStartC = stored.fanTempStartC;
+  cfg.fanTempMaxC = stored.fanTempMaxC;
+  copyCString(cfg.network.hostname, sizeof(cfg.network.hostname), stored.hostname);
+  copyCString(cfg.snmp.community, sizeof(cfg.snmp.community), stored.community);
+
+  for (uint8_t ch = 0; ch < 4; ++ch) {
+    const StoredCalibration& src = stored.calibration[ch];
+    CalibrationProfile& dst = cfg.calibration[ch];
+    const uint8_t mode = src.mode > 2 ? 0 : src.mode;
+    dst.mode = static_cast<CalibrationMode>(mode);
+    dst.k = src.k;
+    dst.offset = src.offset;
+    dst.a = src.a;
+    dst.b = src.b;
+    dst.c = src.c;
+    dst.lut.clear();
+    const uint8_t count = src.lutCount > kMaxLutPoints ? kMaxLutPoints : src.lutCount;
+    dst.lut.reserve(count);
+    for (uint8_t i = 0; i < count; ++i) {
+      dst.lut.push_back({src.lut[i].inputVoltage, src.lut[i].value});
+    }
+  }
 }
+}  // namespace
 
 bool ConfigManager::begin() {
   applyDefaults();
-  return load();
-}
 
-bool ConfigManager::load() {
-  if (!preferences_.begin(kPrefsNamespace, true)) {
-    return false;
-  }
-
-  config_.network.dhcp = preferences_.getBool("dhcp", config_.network.dhcp);
-  config_.network.ethEnabled = preferences_.getBool("eth_en", config_.network.ethEnabled);
-  config_.network.wifiConfigAccessEnabled =
-      preferences_.getBool("wifi_cfg_en", config_.network.wifiConfigAccessEnabled);
-  config_.network.wifiConfigWindowSec =
-      preferences_.getUShort("wifi_cfg_win", config_.network.wifiConfigWindowSec);
-  config_.network.forceWifiPinEnabled =
-      preferences_.getBool("wifi_force_en", config_.network.forceWifiPinEnabled);
-  config_.network.forceWifiPinActiveLow =
-      preferences_.getBool("wifi_force_low", config_.network.forceWifiPinActiveLow);
-  config_.network.forceWifiPin =
-      preferences_.getUChar("wifi_force_pin", config_.network.forceWifiPin);
-  config_.fanTachPin = preferences_.getUChar("fan_pin", config_.fanTachPin);
-  config_.fanPulsesPerRev = preferences_.getUChar("fan_ppr", config_.fanPulsesPerRev);
-  config_.fanPwmEnabled = preferences_.getBool("fan_pwm_en", config_.fanPwmEnabled);
-  config_.fanPwmPin = preferences_.getUChar("fan_pwm_pin", config_.fanPwmPin);
-  config_.fanTempStartC = preferences_.getFloat("fan_t_start", config_.fanTempStartC);
-  config_.fanTempMaxC = preferences_.getFloat("fan_t_max", config_.fanTempMaxC);
-  config_.fanMinDutyPercent = preferences_.getUChar("fan_duty_min", config_.fanMinDutyPercent);
-  config_.fanMaxDutyPercent = preferences_.getUChar("fan_duty_max", config_.fanMaxDutyPercent);
-  config_.fanStartupMaxSec =
-      preferences_.getUShort("fan_start_max_s", config_.fanStartupMaxSec);
-  config_.network.ip = u32ToIp(preferences_.getULong("ip", ipToU32(config_.network.ip)));
-  config_.network.gateway =
-      u32ToIp(preferences_.getULong("gw", ipToU32(config_.network.gateway)));
-  config_.network.subnet =
-      u32ToIp(preferences_.getULong("subnet", ipToU32(config_.network.subnet)));
-  config_.network.dns = u32ToIp(preferences_.getULong("dns", ipToU32(config_.network.dns)));
-  config_.snmp.trapServer =
-      u32ToIp(preferences_.getULong("trap_ip", ipToU32(config_.snmp.trapServer)));
-  config_.snmp.trapPort = preferences_.getUShort("trap_port", config_.snmp.trapPort);
-  config_.snmp.freqKHz = preferences_.getULong("freq_khz", config_.snmp.freqKHz);
-    config_.cpuFreqMhz =
-      sanitizeCpuFreq(preferences_.getUShort("cpu_mhz", config_.cpuFreqMhz));
-  config_.samplePeriodMs = preferences_.getUShort("samp_ms", config_.samplePeriodMs);
-  config_.alarmActiveLow = preferences_.getBool("alm_low", config_.alarmActiveLow);
-
-  String comm = preferences_.getString("community", config_.snmp.community);
-  comm.toCharArray(config_.snmp.community, sizeof(config_.snmp.community));
-
-  String host = preferences_.getString("hostname", config_.network.hostname);
-  host.toCharArray(config_.network.hostname, sizeof(config_.network.hostname));
-
-  if (preferences_.isKey("eth_mac")) {
-    preferences_.getBytes("eth_mac", config_.network.ethMac, sizeof(config_.network.ethMac));
-  }
-
-  for (uint8_t ch = 0; ch < 4; ++ch) {
-    CalibrationProfile& p = config_.calibration[ch];
-    const String prefix = calibrationPrefix(ch);
-
-    p.mode = static_cast<CalibrationMode>(
-        preferences_.getUChar((prefix + "mode").c_str(), static_cast<uint8_t>(p.mode)));
-    p.k = preferences_.getFloat((prefix + "k").c_str(), p.k);
-    p.offset = preferences_.getFloat((prefix + "off").c_str(), p.offset);
-    p.a = preferences_.getFloat((prefix + "a").c_str(), p.a);
-    p.b = preferences_.getFloat((prefix + "b").c_str(), p.b);
-    p.c = preferences_.getFloat((prefix + "c").c_str(), p.c);
-
-    const String lutKey = prefix + "lut";
-    if (preferences_.isKey(lutKey.c_str())) {
-      deserializeLut(preferences_.getString(lutKey.c_str(), ""), p.lut);
+  if (!LittleFS.begin()) {
+    Serial.println("FS: mount failed, formatting");
+    LittleFS.format();
+    if (!LittleFS.begin()) {
+      Serial.println("FS: unavailable, using RAM defaults");
+      return true;
     }
   }
 
-  preferences_.end();
-  applyFixedWifi(config_.network);
+  if (!load()) {
+    Serial.println("FS: no valid config, writing defaults");
+    save();
+  }
+  return true;
+}
+
+bool ConfigManager::load() {
+  File file = LittleFS.open(kConfigPath, "r");
+  if (!file) {
+    return false;
+  }
+
+  StoredConfig stored{};
+  const size_t read = file.read(reinterpret_cast<uint8_t*>(&stored), sizeof(stored));
+  file.close();
+  if (read != sizeof(stored) || stored.magic != kConfigMagic || stored.version != kConfigVersion) {
+    Serial.println("FS: config magic/version mismatch");
+    return false;
+  }
+
+  fromStored(stored, config_);
+  if (config_.network.hostname[0] == '\0') {
+    copyCString(config_.network.hostname, sizeof(config_.network.hostname), "fm-snmp-gateway");
+  }
   return true;
 }
 
 bool ConfigManager::save() {
-  if (!preferences_.begin(kPrefsNamespace, false)) {
+  StoredConfig stored{};
+  toStored(config_, stored);
+
+  File file = LittleFS.open(kConfigPath, "w");
+  if (!file) {
+    Serial.println("FS: open for write failed");
     return false;
   }
 
-  preferences_.putBool("dhcp", config_.network.dhcp);
-  preferences_.putBool("eth_en", config_.network.ethEnabled);
-  preferences_.putBool("wifi_cfg_en", config_.network.wifiConfigAccessEnabled);
-  preferences_.putUShort("wifi_cfg_win", config_.network.wifiConfigWindowSec);
-  preferences_.putBool("wifi_force_en", config_.network.forceWifiPinEnabled);
-  preferences_.putBool("wifi_force_low", config_.network.forceWifiPinActiveLow);
-  preferences_.putUChar("wifi_force_pin", config_.network.forceWifiPin);
-  preferences_.putUChar("fan_pin", config_.fanTachPin);
-  preferences_.putUChar("fan_ppr", config_.fanPulsesPerRev);
-  preferences_.putBool("fan_pwm_en", config_.fanPwmEnabled);
-  preferences_.putUChar("fan_pwm_pin", config_.fanPwmPin);
-  preferences_.putFloat("fan_t_start", config_.fanTempStartC);
-  preferences_.putFloat("fan_t_max", config_.fanTempMaxC);
-  preferences_.putUChar("fan_duty_min", config_.fanMinDutyPercent);
-  preferences_.putUChar("fan_duty_max", config_.fanMaxDutyPercent);
-  preferences_.putUShort("fan_start_max_s", config_.fanStartupMaxSec);
-  preferences_.putULong("ip", ipToU32(config_.network.ip));
-  preferences_.putULong("gw", ipToU32(config_.network.gateway));
-  preferences_.putULong("subnet", ipToU32(config_.network.subnet));
-  preferences_.putULong("dns", ipToU32(config_.network.dns));
-  preferences_.putULong("trap_ip", ipToU32(config_.snmp.trapServer));
-  preferences_.putUShort("trap_port", config_.snmp.trapPort);
-  preferences_.putULong("freq_khz", config_.snmp.freqKHz);
-  preferences_.putUShort("cpu_mhz", sanitizeCpuFreq(config_.cpuFreqMhz));
-  preferences_.putUShort("samp_ms", config_.samplePeriodMs);
-  preferences_.putBool("alm_low", config_.alarmActiveLow);
-  preferences_.putString("community", config_.snmp.community);
-  preferences_.putString("hostname", config_.network.hostname);
-  preferences_.putBytes("eth_mac", config_.network.ethMac, sizeof(config_.network.ethMac));
-
-  for (uint8_t ch = 0; ch < 4; ++ch) {
-    const CalibrationProfile& p = config_.calibration[ch];
-    const String prefix = calibrationPrefix(ch);
-    preferences_.putUChar((prefix + "mode").c_str(), static_cast<uint8_t>(p.mode));
-    preferences_.putFloat((prefix + "k").c_str(), p.k);
-    preferences_.putFloat((prefix + "off").c_str(), p.offset);
-    preferences_.putFloat((prefix + "a").c_str(), p.a);
-    preferences_.putFloat((prefix + "b").c_str(), p.b);
-    preferences_.putFloat((prefix + "c").c_str(), p.c);
-    preferences_.putString((prefix + "lut").c_str(), serializeLut(p.lut));
+  const size_t wrote = file.write(reinterpret_cast<const uint8_t*>(&stored), sizeof(stored));
+  file.close();
+  if (wrote != sizeof(stored)) {
+    Serial.println("FS: write incomplete");
+    return false;
   }
-
-  preferences_.end();
   return true;
+}
+
+void ConfigManager::resetNetworkToDefaults() {
+  config_.network.dhcp = true;
+  config_.network.ip = IPAddress(192, 168, 1, 50);
+  config_.network.gateway = IPAddress(192, 168, 1, 1);
+  config_.network.subnet = IPAddress(255, 255, 255, 0);
+  config_.network.dns = IPAddress(8, 8, 8, 8);
+  copyCString(config_.network.hostname, sizeof(config_.network.hostname), "fm-snmp-gateway");
 }
 
 DeviceConfig& ConfigManager::mutableConfig() {
@@ -219,12 +236,10 @@ const DeviceConfig& ConfigManager::getConfig() const {
 
 void ConfigManager::applyDefaults() {
   config_ = DeviceConfig();
-  applyFixedWifi(config_.network);
   applyDefaultCalibration();
 }
 
 void ConfigManager::applyDefaultCalibration() {
-  // Example LUT for RF forward channel based on specification values.
   config_.calibration[0].mode = CalibrationMode::Lut;
   config_.calibration[0].lut = {
       {0.3750f, 0.0f},
@@ -240,8 +255,6 @@ void ConfigManager::applyDefaultCalibration() {
     config_.calibration[i].offset = 0.0f;
   }
 
-  // AIN2 temperature calibration uses input voltage domain after divider compensation.
-  // 0.0V -> 0C, 5.0V -> 100C.
   config_.calibration[2].k = 20.0f;
   config_.calibration[2].offset = 0.0f;
 }

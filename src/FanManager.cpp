@@ -2,12 +2,11 @@
 
 namespace {
 constexpr uint32_t kFanPwmFreqHz = 25000;
-// Fan specification: below 30% PWM duty the fan is not expected to rotate.
+constexpr uint16_t kFanPwmRange = 255;
 constexpr uint8_t kTachCheckDutyPercent = 30;
 constexpr uint32_t kNoTachTimeoutMs = 10000;
 constexpr uint16_t kFanMaxRpm = 10000;
 constexpr uint8_t kRpmHeadroomPercent = 10;
-// Keep a floor to avoid accepting unrealistically dense glitches even if config changes.
 constexpr uint32_t kMinPulseIntervalFloorUs = 800;
 constexpr float kRpmEmaAlpha = 0.25f;
 }
@@ -81,8 +80,9 @@ bool FanManager::begin(
   noTachSinceMs_ = 0;
 
   if (pwmEnabled_) {
-    ledcSetup(pwmChannel_, kFanPwmFreqHz, pwmResolutionBits_);
-    ledcAttachPin(pwmPin_, pwmChannel_);
+    pinMode(pwmPin_, OUTPUT);
+    analogWriteFreq(kFanPwmFreqHz);
+    analogWriteRange(kFanPwmRange);
     applyDutyPercent(100);
   }
 
@@ -171,7 +171,7 @@ const char* FanManager::getHealthStatusText() const {
   }
 }
 
-void IRAM_ATTR FanManager::isrThunk() {
+void FanManager::isrThunk() {
   if (instance_ != nullptr) {
     instance_->onPulse();
   }
@@ -188,10 +188,8 @@ void FanManager::onPulse() {
 
 void FanManager::applyDutyPercent(uint8_t dutyPercent) {
   dutyPercent_ = dutyPercent > 100 ? 100 : dutyPercent;
-
-  const uint32_t maxDuty = (1U << pwmResolutionBits_) - 1U;
-  const uint32_t duty = (static_cast<uint32_t>(dutyPercent_) * maxDuty) / 100U;
-  ledcWrite(pwmChannel_, duty);
+  const uint32_t duty = (static_cast<uint32_t>(dutyPercent_) * kFanPwmRange) / 100U;
+  analogWrite(pwmPin_, static_cast<int>(duty));
 }
 
 uint8_t FanManager::computeDutyPercent(uint32_t nowMs, float temperatureC) const {
@@ -221,4 +219,3 @@ uint8_t FanManager::computeDutyPercent(uint32_t nowMs, float temperatureC) const
   }
   return static_cast<uint8_t>(mapped + 0.5f);
 }
-

@@ -1,98 +1,56 @@
 # FM_SNMP_GATEWAY
 
-Universal FM transmitter telemetry gateway for ESP32-WROOM-32U.
+Universal FM transmitter telemetry gateway for Raspberry Pi Pico 2 (RP2350A) with an external W5500 Ethernet module.
 
-## Current architecture (v1 skeleton)
+## Architecture
 
-- ConfigManager: persistent settings in Preferences
+- ConfigManager: persistent settings in LittleFS (`/fm_config.bin`)
 - AnalogManager: filtered telemetry pipeline with linear, quadratic, and LUT calibration
 - AlarmManager: debounced digital alarm/status inputs
-- NetworkManager: link abstraction with Ethernet-first hook and Wi-Fi fallback
-- SNMPManager: SNMP GET/GETNEXT/SET(read-only)/TRAP agent and alarm event flow
-- WebManager: web/WebSocket integration hook
-- OTAManager: OTA update support
-- EventLogger: fixed-size in-memory event ring for operational logs
+- NetworkManager: W5500 Ethernet only
+- SNMPManager: SNMP GET/GETNEXT/SET(read-only)/TRAP over EthernetUDP
+- WebManager: HTTP dashboard on Ethernet port 80
+- EventLogger: fixed-size in-memory event ring
 
-## Source layout
-
-- src/main.cpp
-- src/AnalogManager.h, src/AnalogManager.cpp
-- src/SNMPManager.h, src/SNMPManager.cpp
-- src/NetworkManager.h, src/NetworkManager.cpp
-- src/WebManager.h, src/WebManager.cpp
-- src/AlarmManager.h, src/AlarmManager.cpp
-- src/ConfigManager.h, src/ConfigManager.cpp
-- src/OTAManager.h, src/OTAManager.cpp
-- src/EventLogger.h, src/EventLogger.cpp
+Measurement runs on core 1, communication on core 0.
 
 ## Build and run
 
+- Board env: `rp2350a` (Pico 2 / RP2350A)
 - Build: PlatformIO Build
 - Upload: PlatformIO Upload
-- Monitor: PlatformIO Monitor
+- Monitor: PlatformIO Monitor at 115200
 
-Upload when module arrives:
+## Hardware pinout (Pico 2)
 
-- Connect ESP32-WROOM-32UE via USB UART.
-- Set upload_port in platformio.ini if auto-detection fails.
-- Run PlatformIO Upload.
-- Run PlatformIO Monitor at 115200.
+- ADS1115 I2C SDA: GP4
+- ADS1115 I2C SCL: GP5
+- Alarm input: GP6 (active low, pull-up)
+- Status input: GP7 (active low, pull-up)
+- W5500 MISO: GP16
+- W5500 CS: GP17
+- W5500 SCK: GP18
+- W5500 MOSI: GP19
+- W5500 RST: GP20 (active low)
+- W5500 INT: GP21 (reserved, unused)
+- Network reset button: GP22 to GND (internal pull-up)
+- Fan tach: GP26 (pull-up, interrupt)
+- Fan PWM: GP27 (25 kHz)
 
-## Hardware pinout (ESP32-WROOM-32UE)
+Hold the network-reset button for 5 seconds to restore DHCP, IP `192.168.1.50`, gateway `192.168.1.1`, mask `255.255.255.0`, DNS `8.8.8.8`, and hostname `fm-snmp-gateway`. Calibration, fan, and SNMP trap settings are kept, then the board reboots. A button held at boot does not wipe settings.
 
-- Alarm input: GPIO34
-- Status input: GPIO35
-- ADS1115 I2C SDA: GPIO21
-- ADS1115 I2C SCL: GPIO22
-- W5500 SPI SCK: GPIO18
-- W5500 SPI MISO: GPIO19
-- W5500 SPI MOSI: GPIO23
-- W5500 CS: GPIO5 (hardcoded in firmware)
-- W5500 RST: GPIO32 (hardcoded in firmware)
-- FORCE WIFI jumper pin: GPIO27 to GND (configurable via network.forceWifiPin)
-- Fan tach input (PULLUP): GPIO26 (configurable via fanTachPin)
-- Fan PWM output (LEDC 25 kHz): GPIO25 (fixed in firmware)
+## Network
 
-Pin assignment in code:
+- Ethernet only (no WiFi, no mDNS)
+- DHCP default, static IP optional from the web UI
+- MAC is derived from the Pico unique board id (locally administered)
+- If the link drops, Ethernet is retried every 5 seconds
 
-- All hardware pins are centralized in [src/PinConfig.h](src/PinConfig.h).
-- ADS1115 I2C is initialized explicitly with SDA GPIO21 and SCL GPIO22.
-- W5500 SPI is initialized explicitly with SCK GPIO18, MISO GPIO19, MOSI GPIO23, CS GPIO5, and RST GPIO32.
+## SNMP
 
-## Basic connection parameters
-
-WiFi AP:
-
-- Mode: AP (device broadcasts its own WiFi network)
-- SSID/password are fixed in firmware (hardcoded) and are not editable from Web UI.
-- Hardcoded values are defined in src/ConfigManager.cpp.
-- AP IP: default ESP32 SoftAP IP (typically 192.168.4.1)
-
-Ethernet (W5500):
-
-- Startup sequence: if Ethernet is enabled and link is available, device boots on Ethernet and keeps WiFi AP disabled unless FORCE WIFI is active
-- Fallback: if Ethernet is not available, device starts WiFi AP
-- Runtime priority (when Ethernet is enabled and link is up): Ethernet over WiFi
-- Enable key in config: network.ethEnabled
-- CS pin key in config: network.ethCsPin
-- MAC key in config: network.ethMac
-- DHCP default: enabled
-- Static mode fields: network.ip, network.gateway, network.subnet, network.dns
-
-WiFi access for phone-based configuration:
-
-- Control key: network.wifiConfigAccessEnabled (default: true)
-- Time window key: network.wifiConfigWindowSec (default: 300 sec)
-- Behavior: WiFi AP is disabled whenever Ethernet is online, unless FORCE WIFI is active.
-- FORCE WIFI jumper behavior: when jumper requests FORCE WIFI, WiFi AP remains enabled even if Ethernet is online.
-- FORCE WIFI control keys: network.forceWifiPinEnabled, network.forceWifiPinActiveLow, network.forceWifiPin.
-
-SNMP:
-
-- Library: `patricklaf/SNMP` via GitHub dependency.
-- Agent listens on UDP port 161.
-- Default OIDs are mapped in `SNMPManager` and currently expose forward power, reflected power, temperature, fan RPM, fan duty, and alarm states.
-- FM-style OID map (for Node-RED / integration):
+- Library: `patricklaf/SNMP`
+- Agent listens on UDP port 161
+- OID map:
 
 ```json
 {
@@ -108,70 +66,21 @@ SNMP:
 }
 ```
 
-SNMP TRAP (TX alarm from GPIO34):
+TRAP on alarm input edge (`kAlarmInputPin`):
 
-- Trigger condition: edge change on alarm input GPIO34 (`kAlarmInputPin`).
-- Alarm source behavior: open-collector alarm output, active when pulled LOW.
-- Trap destination: configurable `trapIp` and `trapPort` (default port 162).
-- Notification OID (`snmpTrapOID.0`): `1.3.6.1.4.1.35305.1.1.5.4` (eventTxAlarm).
-- Alarm state varbind OID: `1.3.6.1.4.1.35305.1.1.1.6.0` (tsTxAlarm).
-- Alarm state value:
-	- `1` = alarm ON
-	- `0` = alarm OFF
+- Notification OID: `1.3.6.1.4.1.35305.1.1.5.4`
+- State OID: `1.3.6.1.4.1.35305.1.1.1.6.0` (`1` = ON, `0` = OFF)
 
-Persistence:
+## Web UI
 
-- WiFi and Ethernet core parameters are persisted in Preferences/NVS by ConfigManager.
+- `http://<ip>/`
+- Tabs: Telemetry, Network, Fan, Calibration
+- Live data via `GET /api/state`
+- Save: `POST /api/config/save`
+- Reboot: `POST /api/reboot`
 
-## EventLogger transport
+## Fan PWM
 
-- EventLogger output path is restricted to WebSocket publishing path in WebManager.
-- No EventLogger serial printing path is used.
-
-## Web UI live data and control
-
-- Top section is updated via WebSocket with Forward, Reflect, Temperature, Deviation, and Fan RPM.
-- Top section also shows Fan PWM duty percent.
-- Top section also shows fan health status (OK/CLAMPED/FALLBACK/TACH_MISSING).
-- Deviation is shown as numeric value and horizontal VU bar.
-- Lower section contains configuration fields and Save button.
-- Reboot action is available to apply network changes when needed.
-- Fan RPM is displayed in Web UI only; SNMP GET does not expose fan RPM.
-- `freq` OID value comes from Web UI configuration field `FM Frequency (kHz)` and is returned as integer kHz.
-
-## Fan PWM control
-
-- PWM output uses ESP32 LEDC at 25 kHz.
-- On power-up, fan is forced to 100% duty for first 15 seconds (default, configurable).
-- After startup phase, duty is linear vs. temperature from T_start to T_max.
-- Default curve: min 30% at 30 C, up to 100% at 65 C.
-- Parameters are configurable and persisted: enable, T_start, T_max, min/max duty, startup max seconds.
-
-## ADC calibration in Web UI (Specification point 8)
-
-- Calibration fields are available for all 4 ADC channels.
-- Supported modes:
-	- Linear: Y = K * X + Offset
-	- Quadratic: Y = A*X^2 + B*X + C
-	- LUT table with linear interpolation between points
-- LUT input format in UI: volt:value;volt:value (example: 0.375:0;0.458:25;0.542:100)
-- Voltage-domain helper (for LUT X-axis and coefficient input):
-	- Divider resistors are 4.7k (top) and 10k (bottom), so ADC sees $V_{adc}=V_{in}*10/(4.7+10)$.
-	- Reconstruct input voltage with $V_{in}=V_{adc}*(4.7+10)/10=1.47*V_{adc}$.
-	- ADS1115 (GAIN_ONE) conversion is $V_{adc}=ADC*4.096/32767$, therefore $V_{in}=ADC*4.096/32767*1.47$.
-	- Example: ADC=2200 gives about $V_{in}=0.404$ V, so a LUT point can be entered as 0.404:measured_value.
-- Calibration values are saved in Flash/NVS through ConfigManager.
-- UI validates LUT rows before save and shows per-channel row error messages.
-- Forward and Reflect channels include preset LUT buttons based on the reference example.
-
-## Next hardware steps
-
-1. Add custom OID editing if you want runtime SNMP map changes.
-2. Extend SNMP access policy if writable OIDs are needed.
-3. Add HTTP + WebSocket UI refinements in WebManager.
-
-## Implemented from specification in this revision
-
-- ADS1115 integration in AnalogManager with AIN0..AIN3 channel mapping.
-- W5500 Ethernet priority path with WiFi fallback reconnect behavior.
-- SNMP manager OID registry and request handlers are wired to the SNMP library.
+- 25 kHz analog PWM on GP27
+- 100% duty for the first 15 seconds (configurable)
+- Then linear from T_start to T_max (default 30% at 30 C, 100% at 65 C)

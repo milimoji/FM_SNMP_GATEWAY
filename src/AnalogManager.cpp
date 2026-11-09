@@ -16,7 +16,9 @@ bool AnalogManager::begin(const DeviceConfig* cfg) {
   cfg_ = cfg;
   lastSampleMs_ = 0;
   lastDiagMs_ = 0;
-  Wire.begin(PinConfig::kAdsSdaPin, PinConfig::kAdsSclPin);
+  Wire.setSDA(PinConfig::kAdsSdaPin);
+  Wire.setSCL(PinConfig::kAdsSclPin);
+  Wire.begin();
 
   adsReady_ = ads_.begin();
   if (adsReady_) {

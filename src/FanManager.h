@@ -28,7 +28,7 @@ class FanManager {
   const char* getHealthStatusText() const;
 
  private:
-  static void IRAM_ATTR isrThunk();
+  static void isrThunk();
   void onPulse();
   void applyDutyPercent(uint8_t dutyPercent);
   uint8_t computeDutyPercent(uint32_t nowMs, float temperatureC) const;
@@ -49,8 +49,6 @@ class FanManager {
 
   bool pwmEnabled_ = false;
   uint8_t pwmPin_ = 255;
-  uint8_t pwmChannel_ = 0;
-  uint8_t pwmResolutionBits_ = 8;
   uint8_t dutyPercent_ = 0;
   uint32_t bootMs_ = 0;
   uint32_t noTachSinceMs_ = 0;

@@ -1,8 +1,9 @@
 #pragma once
 
 #include <Arduino.h>
+#include <Ethernet.h>
+#include <EthernetUdp.h>
 #include <Udp.h>
-#include <WiFiUdp.h>
 #include <vector>
 
 #include "AlarmManager.h"
@@ -23,8 +24,6 @@ struct SnmpTelemetry {
   uint16_t fanRpm = 0;
   uint8_t fanDutyPercent = 0;
   uint8_t fanHealthStatus = 0;
-  float espCoreTempC = 0.0f;
-  uint16_t cpuFreqMhz = 0;
   uint32_t freeHeapBytes = 0;
   uint32_t uptimeSec = 0;
 };
@@ -67,7 +66,6 @@ class SNMPManager {
   uint32_t lastLogMs_ = 0;
   SNMP::Agent* snmp_ = nullptr;
   EthernetUDP* ethernetUdp_ = nullptr;
-  WiFiUDP* wifiUdp_ = nullptr;
   UDP* activeUdp_ = nullptr;
   LinkType boundLink_ = LinkType::None;
 };

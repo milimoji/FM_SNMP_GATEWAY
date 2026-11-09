@@ -1,7 +1,7 @@
 #pragma once
 
 #include <Arduino.h>
-#include <Preferences.h>
+#include <IPAddress.h>
 #include <vector>
 
 #include "PinConfig.h"
@@ -29,20 +29,11 @@ struct CalibrationProfile {
 
 struct NetworkSettings {
   bool dhcp = true;
-  bool ethEnabled = false;
-  bool wifiConfigAccessEnabled = true;
-  uint16_t wifiConfigWindowSec = 300;
-  bool forceWifiPinEnabled = true;
-  bool forceWifiPinActiveLow = true;
-  uint8_t forceWifiPin = PinConfig::kForceWifiPin;
   IPAddress ip = IPAddress(192, 168, 1, 50);
   IPAddress gateway = IPAddress(192, 168, 1, 1);
   IPAddress subnet = IPAddress(255, 255, 255, 0);
   IPAddress dns = IPAddress(8, 8, 8, 8);
-  uint8_t ethMac[6] = {0x02, 0x46, 0x4D, 0x53, 0x4E, 0x4D};
   char hostname[32] = "fm-snmp-gateway";
-  char wifiSsid[32] = "";
-  char wifiPassword[64] = "";
 };
 
 struct SnmpSettings {
@@ -56,7 +47,6 @@ struct DeviceConfig {
   NetworkSettings network;
   SnmpSettings snmp;
   CalibrationProfile calibration[4];
-  uint16_t cpuFreqMhz = 240;
   bool alarmActiveLow = true;
   uint8_t fanTachPin = PinConfig::kFanTachPin;
   uint8_t fanPulsesPerRev = 2;
@@ -75,6 +65,7 @@ class ConfigManager {
   bool begin();
   bool load();
   bool save();
+  void resetNetworkToDefaults();
 
   DeviceConfig& mutableConfig();
   const DeviceConfig& getConfig() const;
@@ -83,6 +74,5 @@ class ConfigManager {
   void applyDefaults();
   void applyDefaultCalibration();
 
-  Preferences preferences_;
   DeviceConfig config_;
 };

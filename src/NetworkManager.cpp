@@ -2,6 +2,8 @@
 
 #include "PinConfig.h"
 
+#include <pico/unique_id.h>
+
 namespace {
 constexpr uint16_t kW5500VersionReg = 0x0039;
 constexpr uint32_t kEthernetLinkWaitMs = 4000;
@@ -26,38 +28,27 @@ bool NetworkManager::begin(const DeviceConfig* cfg) {
     return false;
   }
 
-  bootMs_ = millis();
-
-  if (cfg_->network.forceWifiPinEnabled) {
-    pinMode(cfg_->network.forceWifiPin,
-            cfg_->network.forceWifiPinActiveLow ? INPUT_PULLUP : INPUT_PULLDOWN);
-  }
-
+  fillBoardMac(mac_);
   ethernetReady_ = false;
   w5500Responding_ = false;
-  wifiApReady_ = false;
   w5500ResetApplied_ = false;
+  spiReady_ = false;
 
-  // Startup policy: try Ethernet first when enabled.
-  if (cfg_->network.ethEnabled) {
-    Serial.println("NET: Ethernet enabled, trying ETH first");
-    ethernetReady_ = connectEthernet();
-    if (ethernetIsOnline()) {
-      Serial.printf("NET: ETH online, IP=%s\n", Ethernet.localIP().toString().c_str());
-      if (isForceWifiRequested()) {
-        if (startWiFiAp()) {
-          Serial.println("NET: WiFi AP enabled because FORCE WIFI is active");
-        }
-      } else {
-        stopWiFi();
-        Serial.println("NET: ETH priority active, WiFi AP disabled");
-      }
-      return true;
-    }
-    Serial.println("NET: ETH unavailable, falling back to WiFi AP");
+  Serial.println("NET: Ethernet-only start");
+  ethernetReady_ = connectEthernet();
+  if (ethernetIsOnline()) {
+    status_.activeLink = LinkType::Ethernet;
+    status_.connected = true;
+    status_.ip = Ethernet.localIP();
+    status_.gateway = Ethernet.gatewayIP();
+    Serial.printf("NET: ETH online, IP=%s\n", status_.ip.toString().c_str());
+  } else {
+    status_.activeLink = LinkType::None;
+    status_.connected = false;
+    status_.ip = IPAddress(0, 0, 0, 0);
+    status_.gateway = IPAddress(0, 0, 0, 0);
+    Serial.println("NET: ETH unavailable");
   }
-
-  startWiFiAp();
   return true;
 }
 
@@ -66,83 +57,46 @@ void NetworkManager::update(uint32_t nowMs) {
     return;
   }
 
-  const bool ethEnabled = cfg_->network.ethEnabled;
-
-  if (ethEnabled && ethernetIsOnline()) {
+  if (ethernetIsOnline()) {
     status_.activeLink = LinkType::Ethernet;
     status_.connected = true;
     status_.ip = Ethernet.localIP();
-
-    if (isForceWifiRequested()) {
-      startWiFiAp();
-    } else {
-      stopWiFi();
-    }
+    status_.gateway = Ethernet.gatewayIP();
     return;
   }
 
-  if (ethEnabled && nowMs - lastEthernetRetryMs_ >= kReconnectPeriodMs) {
+  if (nowMs - lastEthernetRetryMs_ >= kReconnectPeriodMs) {
     lastEthernetRetryMs_ = nowMs;
     ethernetReady_ = connectEthernet();
-  } else if (!ethEnabled) {
-    ethernetReady_ = false;
   }
 
-  if (startWiFiAp()) {
-    status_.activeLink = LinkType::WiFi;
+  if (ethernetIsOnline()) {
+    status_.activeLink = LinkType::Ethernet;
     status_.connected = true;
-    status_.ip = WiFi.softAPIP();
+    status_.ip = Ethernet.localIP();
+    status_.gateway = Ethernet.gatewayIP();
     return;
   }
 
   status_.activeLink = LinkType::None;
   status_.connected = false;
   status_.ip = IPAddress(0, 0, 0, 0);
+  status_.gateway = IPAddress(0, 0, 0, 0);
 }
 
 NetworkStatus NetworkManager::getStatus() const {
   return status_;
 }
 
-bool NetworkManager::startWiFiAp() {
-  if (wifiApReady_) {
-    return true;
-  }
-
-  if (cfg_ == nullptr) {
-    return false;
-  }
-
-  if (strlen(cfg_->network.wifiSsid) == 0) {
-    Serial.println("NET: WiFi SSID is empty, AP start aborted");
-    return false;
-  }
-
-  WiFi.mode(WIFI_AP);
-  wifiApReady_ = WiFi.softAP(cfg_->network.wifiSsid, cfg_->network.wifiPassword);
-  if (wifiApReady_) {
-    Serial.printf("NET: WiFi AP started, SSID=%s IP=%s\n",
-                  cfg_->network.wifiSsid,
-                  WiFi.softAPIP().toString().c_str());
-  } else {
-    Serial.println("NET: WiFi AP start failed");
-  }
-  return wifiApReady_;
-}
-
-void NetworkManager::stopWiFi() {
-  const wifi_mode_t mode = WiFi.getMode();
-  if (mode == WIFI_AP || mode == WIFI_AP_STA) {
-    WiFi.softAPdisconnect(true);
-  }
-
-  // Keep WiFi/lwIP socket stack initialized so HTTP server can run on ETH.
-  if (mode == WIFI_OFF || mode == WIFI_AP || mode == WIFI_AP_STA) {
-    WiFi.mode(WIFI_STA);
-    WiFi.disconnect(false, false);
-  }
-
-  wifiApReady_ = false;
+void NetworkManager::fillBoardMac(uint8_t* mac) const {
+  pico_unique_board_id_t uid;
+  pico_get_unique_board_id(&uid);
+  mac[0] = 0x02;
+  mac[1] = uid.id[2];
+  mac[2] = uid.id[3];
+  mac[3] = uid.id[4];
+  mac[4] = uid.id[5];
+  mac[5] = uid.id[6];
 }
 
 bool NetworkManager::connectEthernet() {
@@ -151,27 +105,35 @@ bool NetworkManager::connectEthernet() {
   }
 
   const uint8_t csPin = PinConfig::kW5500CsPin;
-  const int8_t rstPin = PinConfig::kW5500RstPin;
-  Serial.printf("NET: ETH pins sck=%u miso=%u mosi=%u cs=%u\n",
+  const uint8_t rstPin = PinConfig::kW5500RstPin;
+  Serial.printf("NET: ETH pins sck=%u miso=%u mosi=%u cs=%u rst=%u\n",
                 static_cast<unsigned>(PinConfig::kW5500SckPin),
                 static_cast<unsigned>(PinConfig::kW5500MisoPin),
                 static_cast<unsigned>(PinConfig::kW5500MosiPin),
-                static_cast<unsigned>(csPin));
+                static_cast<unsigned>(csPin),
+                static_cast<unsigned>(rstPin));
 
-  if (!w5500ResetApplied_ && rstPin >= 0) {
-    Serial.printf("NET: ETH resetting W5500 via rst=%d\n", static_cast<int>(rstPin));
-    pinMode(static_cast<uint8_t>(rstPin), OUTPUT);
-    digitalWrite(static_cast<uint8_t>(rstPin), LOW);
-    delay(10);
-    digitalWrite(static_cast<uint8_t>(rstPin), HIGH);
-    delay(120);
+  if (!w5500ResetApplied_) {
+    Serial.println("NET: ETH resetting W5500");
+    pinMode(rstPin, OUTPUT);
+    digitalWrite(rstPin, LOW);
+    delay(2);
+    digitalWrite(rstPin, HIGH);
+    delay(50);
     w5500ResetApplied_ = true;
   }
 
   pinMode(csPin, OUTPUT);
   digitalWrite(csPin, HIGH);
 
-  SPI.begin(PinConfig::kW5500SckPin, PinConfig::kW5500MisoPin, PinConfig::kW5500MosiPin, csPin);
+  if (!spiReady_) {
+    SPI.setRX(PinConfig::kW5500MisoPin);
+    SPI.setTX(PinConfig::kW5500MosiPin);
+    SPI.setSCK(PinConfig::kW5500SckPin);
+    SPI.setCS(csPin);
+    SPI.begin();
+    spiReady_ = true;
+  }
 
   const uint8_t version = readW5500Version(csPin);
   Serial.printf("NET: W5500 version probe=0x%02X\n", static_cast<unsigned>(version));
@@ -179,23 +141,26 @@ bool NetworkManager::connectEthernet() {
 
   Ethernet.init(csPin);
 
-  // Pre-begin probe is diagnostic only; some modules report no-hardware before begin().
   const auto hw = Ethernet.hardwareStatus();
   const auto linkBeforeBegin = Ethernet.linkStatus();
-  Serial.printf("NET: ETH probe hw=%d link=%d\n",
+  Serial.printf("NET: ETH probe hw=%d link=%d mac=%02X:%02X:%02X:%02X:%02X:%02X\n",
                 static_cast<int>(hw),
-                static_cast<int>(linkBeforeBegin));
+                static_cast<int>(linkBeforeBegin),
+                mac_[0],
+                mac_[1],
+                mac_[2],
+                mac_[3],
+                mac_[4],
+                mac_[5]);
   if (!w5500Responding_) {
     Serial.println("NET: W5500 version probe did not match expected chip, continuing with caution");
   }
 
-  const uint8_t* mac = cfg_->network.ethMac;
-
   if (cfg_->network.dhcp) {
     Serial.println("NET: ETH DHCP start");
-    // Keep DHCP bounded so periodic retries do not starve the task watchdog.
-    if (Ethernet.begin(const_cast<uint8_t*>(mac), 4000, 1200) == 0) {
+    if (Ethernet.begin(mac_, 4000, 1200) == 0) {
       Serial.println("NET: ETH DHCP failed");
+      ethernetReady_ = false;
       return false;
     }
   } else {
@@ -204,12 +169,7 @@ bool NetworkManager::connectEthernet() {
                   cfg_->network.gateway.toString().c_str(),
                   cfg_->network.subnet.toString().c_str(),
                   cfg_->network.dns.toString().c_str());
-    Ethernet.begin(
-        const_cast<uint8_t*>(mac),
-        cfg_->network.ip,
-        cfg_->network.dns,
-        cfg_->network.gateway,
-        cfg_->network.subnet);
+    Ethernet.begin(mac_, cfg_->network.ip, cfg_->network.dns, cfg_->network.gateway, cfg_->network.subnet);
   }
 
   Serial.printf("NET: ETH post-begin ip=%s hw=%d link=%d\n",
@@ -242,32 +202,9 @@ bool NetworkManager::ethernetIsOnline() const {
     return false;
   }
 
-  const auto link = Ethernet.linkStatus();
-  if (link != LinkON) {
+  if (Ethernet.linkStatus() != LinkON) {
     return false;
   }
 
   return Ethernet.localIP() != IPAddress(0, 0, 0, 0);
-}
-
-bool NetworkManager::shouldKeepWifiForConfig(uint32_t nowMs) const {
-  if (cfg_ == nullptr || !cfg_->network.wifiConfigAccessEnabled) {
-    return false;
-  }
-
-  const uint32_t windowMs = static_cast<uint32_t>(cfg_->network.wifiConfigWindowSec) * 1000UL;
-  if (windowMs == 0) {
-    return true;
-  }
-
-  return (nowMs - bootMs_) <= windowMs;
-}
-
-bool NetworkManager::isForceWifiRequested() const {
-  if (cfg_ == nullptr || !cfg_->network.forceWifiPinEnabled) {
-    return false;
-  }
-
-  const bool high = digitalRead(cfg_->network.forceWifiPin) == HIGH;
-  return cfg_->network.forceWifiPinActiveLow ? !high : high;
 }
